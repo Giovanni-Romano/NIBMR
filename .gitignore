@@ -1,5 +1,6 @@
-.rds
-.RDS
+*.rds
+*.RDS
+.DS_Store
 .Rproj.user
 .Rhistory
 .RData
