@@ -14,11 +14,11 @@ colnames(sim_settings) = c("err_distr", "unif_cov", "k")
 
 results = vector("list", nrow(sim_settings))
 niter = 11e3
-nrep = 10
+nrep = 100
 
 # PARALLEL BACKEND ----
 library(doParallel); library(foreach)
-ncores = 5 #max(1, parallel::detectCores() - 1)
+ncores = 8 #max(1, parallel::detectCores() - 1)
 cl = makeCluster(ncores)
 registerDoParallel(cl)
 
@@ -81,18 +81,23 @@ for (s in 1:nrow(sim_settings)){
       m = min(0, min(res_qr))
       theta = pi/4 * (M+m)/(M-m)
       
-      out_optim = sapply(c("Nelder-Mead", "BFGS", "CG", "L-BFGS-B", "SANN"),
+      out_optim = sapply(c("Nelder-Mead", "BFGS", "CG", "L-BFGS-B", "SANN"), 
                          function(m){
-                           est = optim(par = c(0.1, -0.25),
-                                       fn = function(b) sum(loss_symm(y - X_scaled%*%b, k, 1e-3)),
+                           est = optim(par = c(0.05, -0.45), 
+                                       fn = function(b) sum(loss_asymm2(y - X_scaled%*%b, 
+                                                                        c(kinit/sd(res_qr[res_qr < 0]),
+                                                                          kinit/sd(res_qr[res_qr > 0])), 
+                                                                        1e-3)),
                                        method = m)$par
                            b0 = est[1]; b1 = est[2]
                            c(b0-b1*mu_x/sd_x, b1/sd_x)
                          }
-
+                         
       )
       
-      out_MCMC = MCMC_MH(niter = niter, X = X_scaled, y = y, k = k, c = 1e-3, 
+      out_MCMC = MCMC_MH(niter = niter, X = X_scaled, y = y, 
+                         k = c(kinit/sd(res_qr[res_qr < 0]), kinit/sd(res_qr[res_qr > 0])), 
+                         c = 1e-3, asymm = T,
                          p = 2,  beta0 = c(0.1, -0.25), prior_sd = 1/3)
       
       draws_tmp = out_MCMC$beta[-(1:1000), ]
@@ -148,7 +153,7 @@ for (s in 1:nrow(sim_settings)){
   cat(round(100*s/nrow(sim_settings), 2), "%\n", sep = "")
 }
 stopCluster(cl)
-# saveRDS(results, "sim_study_nonCalibrated.RDS")
+saveRDS(results, "sim_study_nonCalibrated_asymm.RDS")
 
 
 # Diagnostics ----
