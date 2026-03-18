@@ -9,16 +9,16 @@ true_beta = c(0, -0.5)
 error_distr = c("Gaussian", "Gaussian_0.5", "Gamma_2_2")
 covariate = c("0.5", "1", "asymm")
 k = c("0.5", "init", "final")
-sim_settings = as.matrix(expand.grid(error_distr, covariate, k))
+sim_settings = as.matrix(expand.grid(error_distr, covariate, k))[1:9, ]
 colnames(sim_settings) = c("err_distr", "unif_cov", "k")
 
 results = vector("list", nrow(sim_settings))
 niter = 11e3
-nrep = 100
+nrep = 10 #100
 
 # PARALLEL BACKEND ----
 library(doParallel); library(foreach)
-ncores = 8 #max(1, parallel::detectCores() - 1)
+ncores = 5 #max(1, parallel::detectCores() - 1)
 cl = makeCluster(ncores)
 registerDoParallel(cl)
 
@@ -60,7 +60,7 @@ for (s in 1:nrow(sim_settings)){
       X = cbind(1, x)
       mu_x = mean(x); sd_x = sd(x)
       X_scaled = cbind(1, (x-mu_x)/sd_x)
-      eta = X%*%true_beta
+      eta = c(X%*%true_beta)
       
       # DRAW RESPONSE
       y = eta + ( rerr(n) - mode_shift)
@@ -76,28 +76,20 @@ for (s in 1:nrow(sim_settings)){
                  "init" = kinit,
                  "final" = kfinal) 
       
-      skew_index = mean((res_qr - mean(res_qr))^3)/sd_quant^3
-      M = max(0, max(res_qr))
-      m = min(0, min(res_qr))
-      theta = pi/4 * (M+m)/(M-m)
-      
-      out_optim = sapply(c("Nelder-Mead", "BFGS", "CG", "L-BFGS-B", "SANN"), 
+      out_optim = sapply(c("Nelder-Mead", "BFGS", "CG", "L-BFGS-B", "SANN"),
                          function(m){
-                           est = optim(par = c(0.05, -0.45), 
-                                       fn = function(b) sum(loss_asymm2(y - X_scaled%*%b, 
-                                                                        c(kinit/sd(res_qr[res_qr < 0]),
-                                                                          kinit/sd(res_qr[res_qr > 0])), 
-                                                                        1e-3)),
+                           est = optim(par = c(0.1, -0.25),
+                                       fn = function(b) sum(loss_symm(y - X_scaled%*%b, k, 1e-3)),
                                        method = m)$par
                            b0 = est[1]; b1 = est[2]
                            c(b0-b1*mu_x/sd_x, b1/sd_x)
                          }
-                         
+
       )
       
-      out_MCMC = MCMC_MH(niter = niter, X = X_scaled, y = y, 
-                         k = c(kinit/sd(res_qr[res_qr < 0]), kinit/sd(res_qr[res_qr > 0])), 
-                         c = 1e-3, asymm = T,
+      out_MCMC = MCMC_MH(niter = niter, 
+                         X = X_scaled, y = y, 
+                         k = k, c = 1e-3, 
                          p = 2,  beta0 = c(0.1, -0.25), prior_sd = 1/3)
       
       draws_tmp = out_MCMC$beta[-(1:1000), ]
@@ -153,8 +145,8 @@ for (s in 1:nrow(sim_settings)){
   cat(round(100*s/nrow(sim_settings), 2), "%\n", sep = "")
 }
 stopCluster(cl)
-saveRDS(results, "sim_study_nonCalibrated_asymm.RDS")
-
+saveRDS(results, "sim_study_nonCalibrated.RDS")
+# results = readRDS("sim_study_nonCalibrated.RDS")
 
 # Diagnostics ----
 # Rhat
