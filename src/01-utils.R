@@ -41,7 +41,7 @@ MCMC_MH = function(niter, X, y, k, c, p, beta0, prior_sd, asymm = F, debug = F){
     est <- optim(par = beta0,
                  fn = function(b) sum(loss(y[-i] - X[-i, ] %*% b, k, 1e-3)),
                  method = "BFGS")$par
-    loss(y[i] - drop(X_scaled[i, ] %*% est), k, 1e-3)
+    loss(y[i] - drop(X[i, ] %*% est), k, 1e-3)
   })
   w = w_num / (sum(LOO)/n)
   
