@@ -12,7 +12,7 @@ loss_asymm = function(eps, k, c, g = 1, theta = 0){
 }
 
 
-loss_asymm2 = function(eps, k, c, g = 1, theta = pi/6){
+loss_asymm2 = function(eps, k, c, g = 1){
   k1 = k[1]
   k2 = k[2]
   h = 2*g
@@ -34,6 +34,16 @@ MCMC_MH = function(niter, X, y, k, c, p, beta0, prior_sd, asymm = F, debug = F){
   n = nrow(X)
   
   loss = ifelse(asymm, loss_asymm2, loss_symm)
+  
+  
+  w_num = 1/2
+  LOO <- sapply(1:n, function(i) {
+    est <- optim(par = beta0,
+                 fn = function(b) sum(loss(y[-i] - X[-i, ] %*% b, k, 1e-3)),
+                 method = "BFGS")$par
+    loss(y[i] - drop(X_scaled[i, ] %*% est), k, 1e-3)
+  })
+  w = w_num / (sum(LOO)/n)
   
   beta_sample = matrix(NA, nrow = niter, ncol = p)
   beta_init = beta0
@@ -63,16 +73,16 @@ MCMC_MH = function(niter, X, y, k, c, p, beta0, prior_sd, asymm = F, debug = F){
     r_last = y - X%*%last
     r_prop = y - X%*%prop
     
-    loss_last = sapply(r_last, loss, k = k, c = c)
-    loss_prop = sapply(r_prop, loss, k = k, c = c)
+    loss_last = loss(r_last, k = k, c = c)
+    loss_prop = loss(r_prop, k = k, c = c)
     
     if (debug){
       plot(density(r_last)); lines(density(r_prop), col = 2)
       cat("\n\n Mean losses", colMeans(loss_sample[m, , ]), "\n\n")
     }
     
-    loglik_last = -0.5 * sum(loss_last)
-    loglik_prop = -0.5 * sum(loss_prop)
+    loglik_last = -w*sum(loss_last)
+    loglik_prop = -w*sum(loss_prop)
     
     if (debug){
       cat("loglik last:", loglik_last, "\t | \t loglik prop:", loglik_prop, "\n")
@@ -96,5 +106,6 @@ MCMC_MH = function(niter, X, y, k, c, p, beta0, prior_sd, asymm = F, debug = F){
   }
   
   return(list(beta = beta_sample, 
-              acc_prop = acc/niter, alfa = alfa_sample, sd_prop = sd_prop_sample))
+              acc_prop = acc/niter, alfa = alfa_sample, sd_prop = sd_prop_sample,
+              w = w))
 }
