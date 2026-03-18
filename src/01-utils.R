@@ -57,7 +57,7 @@ MCMC_MH = function(niter, X, y, k, c, p, beta0, prior_sd, asymm = F, debug = F){
   
   for (m in 1:niter){
     
-    if (m %% (niter/10) == 0){
+    if (debug & m %% (niter/10) == 0){
       cat(10 * m / (niter/10), "% \t")
     }
     
