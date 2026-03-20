@@ -593,7 +593,7 @@ plot_w = cbind.data.frame(sim_settings, w_TL) %>%
   geom_boxplot() +
   facet_grid(err_distr ~ unif_cov)
 ggsave(plot = plot_w, 
-       filename = "boxplot_w_replicates.pdf", path = "sim_study_nonC-GBI/02-w_unit_loss/",
+       filename = "boxplot_w_replicates.pdf", path = "sim_study_nonC-GBI/",
        width = 5, height = 5)
 
 # Average density TL ----
@@ -601,10 +601,6 @@ draws_TL = lapply(input_asymm_TL,
                   function(I) 
                     lapply(I, function(x) x$draws[seq(10, 10^4, by = 10), ]) %>% abind::abind(along = 3)) %>% 
   abind::abind(along = 4) %>% aperm(c(4, 3, 2, 1))
-
-draws_TL[ , 1] = drawsTL[ , 1] - draws_TL[ , 2]*mu_x1/sd_x1 - draws_TL[ , 3]*mu_x2/sd_x2
-draws[ , 2] = draws_TL[ , 2]/sd_x1
-draws[ , 3] = draws_TL[ , 3]/sd_x2
 
 min_b0 = min(draws_TL[ , , 1, ]); max_b0 = max(draws_TL[ , , 1, ])
 min_b1 = min(draws_TL[ , , 2, ]); max_b1 = max(draws_TL[ , , 2, ])
@@ -642,39 +638,324 @@ dens_b2 = apply(draws_TL[ , , 3, ], 1,
 dimnames(dens_b0) = dimnames(dens_b1) = dimnames(dens_b2) = 
   list("setting" = 1:27, "replicate" = 1:100, "axis" = c("x", "y"), "knot" = 1:100) 
 
+# Plot b0 ----
 df_dens_b0 = left_join(reshape2::melt(dens_b0),
-          cbind.data.frame(setting = 1:27, sim_settings),
-          by = "setting") %>% 
+                       cbind.data.frame(setting = 1:27, sim_settings),
+                       by = "setting") %>% 
   pivot_wider(names_from = axis, values_from = value) %>% 
   group_by(setting, knot, .drop = F) %>% 
   mutate(mean_y = mean(y),
          k = factor(k, levels = c("0.5", "init", "final")))
 
-# Plot b0
-df_dens_b0 %>% 
+plt_dens_b0_1 = df_dens_b0 %>% 
   filter(err_distr == "Gaussian") %>% 
   ggplot(aes(x = x, y = mean_y)) +
   geom_vline(xintercept = true_beta[1], col = "gold") +
   geom_line(aes(y = y, group = replicate), col = "grey", alpha = 0.2) +
   geom_line() + 
   facet_grid(k ~ unif_cov) +
-  labs(title = "Gaussian error distribution")
+  labs(title = "Gaussian error distribution") +
+  scale_x_continuous(limits = c(-1, +1))
 
-df_dens_b0 %>% 
+plt_dens_b0_2 = df_dens_b0 %>% 
   filter(err_distr == "Gaussian_0.5") %>% 
   ggplot(aes(x = x, y = mean_y)) +
   geom_vline(xintercept = true_beta[1], col = "gold") +
   geom_line(aes(y = y, group = replicate), col = "grey", alpha = 0.2) +
   geom_line() + 
   facet_grid(k ~ unif_cov) +
-  labs(title = "Gaussian error distribution with sd = 0.5")
+  labs(title = "Gaussian error distribution with sd = 0.5") +
+  scale_x_continuous(limits = c(-1, +1))
 
-df_dens_b0 %>% 
+plt_dens_b0_3 = df_dens_b0 %>% 
   filter(err_distr == "Gamma_2_2") %>% 
   ggplot(aes(x = x, y = mean_y)) +
   geom_vline(xintercept = true_beta[1], col = "gold") +
   geom_line(aes(y = y, group = replicate), col = "grey", alpha = 0.2) +
   geom_line() + 
   facet_grid(k ~ unif_cov) +
-  labs(title = "Gamma error distribution with shape = 2 and scale = 2")
+  labs(title = "Gamma error distribution with shape = 2 and scale = 2") +
+  scale_x_continuous(limits = c(-1, +1))
 
+ggsave(plot = gridExtra::marrangeGrob(grobs = list(plt_dens_b0_1, plt_dens_b0_2, plt_dens_b0_3), 
+                                      nrow = 1, ncol = 1, top = NULL), 
+       filename = "density_b0.pdf", path = "sim_study_nonC-GBI/",
+       width = 9, height = 5)
+
+
+# Plot density b1 ----
+df_dens_b1 = left_join(reshape2::melt(dens_b1),
+                       cbind.data.frame(setting = 1:27, sim_settings),
+                       by = "setting") %>% 
+  pivot_wider(names_from = axis, values_from = value) %>% 
+  group_by(setting, knot, .drop = F) %>% 
+  mutate(mean_y = mean(y),
+         k = factor(k, levels = c("0.5", "init", "final")))
+
+plt_dens_b1_1 = df_dens_b1 %>% 
+  filter(err_distr == "Gaussian") %>% 
+  ggplot(aes(x = x, y = mean_y)) +
+  geom_vline(xintercept = true_beta[2], col = "gold") +
+  geom_line(aes(y = y, group = replicate), col = "grey", alpha = 0.2) +
+  geom_line() + 
+  facet_grid(k ~ unif_cov) +
+  labs(title = "Gaussian error distribution") +
+  scale_x_continuous(limits = c(-1.5, 0.5))
+
+plt_dens_b1_2 = df_dens_b1 %>% 
+  filter(err_distr == "Gaussian_0.5") %>% 
+  ggplot(aes(x = x, y = mean_y)) +
+  geom_vline(xintercept = true_beta[2], col = "gold") +
+  geom_line(aes(y = y, group = replicate), col = "grey", alpha = 0.2) +
+  geom_line() + 
+  facet_grid(k ~ unif_cov) +
+  labs(title = "Gaussian error distribution with sd = 0.5") +
+  scale_x_continuous(limits = c(-1.5, 0.5))
+
+plt_dens_b1_3 = df_dens_b1 %>% 
+  filter(err_distr == "Gamma_2_2") %>% 
+  ggplot(aes(x = x, y = mean_y)) +
+  geom_vline(xintercept = true_beta[2], col = "gold") +
+  geom_line(aes(y = y, group = replicate), col = "grey", alpha = 0.2) +
+  geom_line() + 
+  facet_grid(k ~ unif_cov) +
+  labs(title = "Gamma error distribution with shape = 2 and scale = 2") +
+  scale_x_continuous(limits = c(-1.5, 0.5))
+
+ggsave(plot = gridExtra::marrangeGrob(grobs = list(plt_dens_b1_1, plt_dens_b1_2, plt_dens_b1_3), 
+                                      nrow = 1, ncol = 1, top = NULL), 
+       filename = "density_b1.pdf", path = "sim_study_nonC-GBI/",
+       width = 9, height = 5)
+
+
+# Plot density b2 ----
+df_dens_b2 = left_join(reshape2::melt(dens_b2),
+                       cbind.data.frame(setting = 1:27, sim_settings),
+                       by = "setting") %>% 
+  pivot_wider(names_from = axis, values_from = value) %>% 
+  group_by(setting, knot, .drop = F) %>% 
+  mutate(mean_y = mean(y),
+         k = factor(k, levels = c("0.5", "init", "final")))
+
+plt_dens_b2_1 = df_dens_b2 %>% 
+  filter(err_distr == "Gaussian") %>% 
+  ggplot(aes(x = x, y = mean_y)) +
+  geom_vline(xintercept = true_beta[3], col = "gold") +
+  geom_line(aes(y = y, group = replicate), col = "grey", alpha = 0.2) +
+  geom_line() + 
+  facet_grid(k ~ unif_cov) +
+  labs(title = "Gaussian error distribution") +
+  scale_x_continuous(limits = c(-.3, 1.7))
+
+plt_dens_b2_2 = df_dens_b2 %>% 
+  filter(err_distr == "Gaussian_0.5") %>% 
+  ggplot(aes(x = x, y = mean_y)) +
+  geom_vline(xintercept = true_beta[3], col = "gold") +
+  geom_line(aes(y = y, group = replicate), col = "grey", alpha = 0.2) +
+  geom_line() + 
+  facet_grid(k ~ unif_cov) +
+  labs(title = "Gaussian error distribution with sd = 0.5") +
+  scale_x_continuous(limits = c(-.3, 1.7))
+
+plt_dens_b2_3 = df_dens_b2 %>% 
+  filter(err_distr == "Gamma_2_2") %>% 
+  ggplot(aes(x = x, y = mean_y)) +
+  geom_vline(xintercept = true_beta[3], col = "gold") +
+  geom_line(aes(y = y, group = replicate), col = "grey", alpha = 0.2) +
+  geom_line() + 
+  facet_grid(k ~ unif_cov) +
+  labs(title = "Gamma error distribution with shape = 2 and scale = 2") +
+  scale_x_continuous(limits = c(-.3, 1.7))
+
+ggsave(plot = gridExtra::marrangeGrob(grobs = list(plt_dens_b2_1, plt_dens_b2_2, plt_dens_b2_3), 
+                                      nrow = 1, ncol = 1, top = NULL), 
+       filename = "density_b2.pdf", path = "sim_study_nonC-GBI/",
+       width = 9, height = 5)
+
+
+
+# Analysis k_multi from TL ----
+k_TL = lapply(input_asymm_TL, function(I) sapply(I, function(x) x$k)) %>% abind::abind(along = 3)
+dimnames(k_TL) = list("side" = c("neg", "pos"), 
+                      "replicate" = 1:100, 
+                      "sim_setting" = 1:27)
+
+df_k_TL = k_TL %>% reshape2::melt() %>% 
+  left_join(cbind.data.frame(sim_setting = 1:27, sim_settings),
+            by = "sim_setting") %>% 
+  mutate(k = factor(k, levels = c("0.5", "init", "final")))
+
+plt_k_TL_Gauss05 = df_k_TL %>%  filter(err_distr == "Gaussian_0.5") %>% 
+  ggplot() + 
+  geom_boxplot(aes(x = side, y = value)) +
+  facet_grid(k ~ unif_cov, scales = "free_y") +
+  labs(title = "k values with Tower Law - Gaussian(0, sd = 0.5) error distribution")
+
+plt_k_TL_Gauss1 = df_k_TL %>%  filter(err_distr == "Gaussian") %>% 
+  ggplot() + 
+  geom_boxplot(aes(x = side, y = value)) +
+  facet_grid(k ~ unif_cov, scales = "free_y") +
+  labs(title = "k values with Tower Law - Gaussian(0, sd = 1) error distribution")
+
+
+plt_k_TL_Gamma = df_k_TL %>%  filter(err_distr == "Gamma_2_2") %>% 
+  ggplot() + 
+  geom_boxplot(aes(x = side, y = value)) +
+  facet_grid(k ~ unif_cov, scales = "free_y") +
+  labs(title = "k values with Tower Law - Gamma(2, 2) error distribution")
+
+ggsave(plot = gridExtra::marrangeGrob(grobs = list(plt_k_TL_Gauss1, plt_k_TL_Gauss05, plt_k_TL_Gamma), 
+                                      nrow = 1, ncol = 1, top = NULL), 
+       filename = "k_TL.pdf", path = "sim_study_nonC-GBI/",
+       width = 6, height = 6)
+
+
+# Small simulation to get k_symm and k_asymm (the one without tower law) ----
+k_symm = matrix(NA, nrow = 100, ncol = 27)
+dimnames(k_symm) = list("replicate" = 1:100, "sim_setting" = 1:27)
+k_asymm = array(NA, dim = dim(k_TL), dimnames = dimnames(k_TL))
+nrep = 100
+for (s in 1:nrow(sim_settings)){
+  
+  s_s = sim_settings[s, ]
+  ed_s = unname(s_s[1])
+  cd_s = unname(s_s[2])
+  k_s = unname(s_s[3])
+  
+  res_tmp = sapply(1:nrep, function(x) {
+      
+      # DEFINE ERROR SAMPLER
+      rerr = switch(ed_s,
+                    Gaussian = function(ndraws) rnorm(ndraws, 0, 1),
+                    Gaussian_0.5 = function(ndraws) rnorm(ndraws, 0, 0.5),
+                    Gamma_2_2 = function(ndraws) rgamma(ndraws, 2, 2),
+                    Gamma_1.5_1.5 = function(ndraws) rgamma(ndraws, 1.5, 1.5),
+                    Gamma_1.5_3 = function(ndraws) rgamma(ndraws, 1.5, 3))
+      
+      mode_shift = switch(ed_s,
+                          Gaussian = 0,
+                          Gaussian_0.5 = 0,
+                          Gamma_2_2 = (2-1)/2,
+                          Gamma_1.5_1.5 = (1.5-1)/1.5,
+                          Gamma_1.5_3 = (1.5-1)/3)
+      
+      rcov = switch(cd_s,
+                    "0.5" = function(ndraws) runif(ndraws, -0.5, 0.5),
+                    "1" = function(ndraws) runif(ndraws, -1, 1),
+                    asymm = function(ndraws) runif(ndraws, 0, 2))
+      
+      # DRAW COVARIATES
+      x1 = rcov(n)
+      x2 = rcov(n)
+      X = cbind(1, x1, x2)
+      mu_x1 = mean(x1); sd_x1 = sd(x1)
+      mu_x2 = mean(x2); sd_x2 = sd(x2)
+      X_scaled = cbind(1, (x1-mu_x1)/sd_x1, (x2-mu_x2)/sd_x2)
+      eta = X%*%true_beta
+      
+      # DRAW RESPONSE
+      y = eta + rerr(n) - mode_shift
+      
+      
+      # OPTIMAL K
+      const = (n^(5/12)) * (log(n)^(7/12)) / (n^(7/12))
+      kinit = (n/const)^(1/7)
+      res_qr = quantreg::rq(y ~ -1 + X_scaled, tau = 0.5)$residuals
+      kfinal = kinit * (n^(1/7))
+      k_symm = switch(k_s,
+                      "0.5" = 0.5,
+                      "init" = kinit,
+                      "final" = kfinal/sd(res_qr))
+      
+      k_tmp = switch(k_s,
+                     "0.5" = 0.5,
+                     "init" = kinit,
+                     "final" = kfinal)
+      
+      k_asymm = k_tmp / c(sd(res_qr[res_qr < 0]), sd(res_qr[res_qr > 0]))
+      
+      c(k_symm = k_symm, k_asymm_neg = k_asymm[1], k_asymm_pos = k_asymm[2])
+    }) %>% t()
+  
+  k_symm[ , s] = res_tmp[, "k_symm"]
+  k_asymm[ , , s] = t(res_tmp[, c("k_asymm_neg", "k_asymm_pos")])
+}
+
+## Plot asymm ----
+df_k_asymm = k_asymm %>% reshape2::melt() %>% 
+  left_join(cbind.data.frame(sim_setting = 1:27, sim_settings),
+            by = "sim_setting") %>% 
+  mutate(k = factor(k, levels = c("0.5", "init", "final")))
+
+plt_k_asymm_Gauss05 = df_k_asymm %>%  filter(err_distr == "Gaussian_0.5") %>%
+  ggplot() + 
+  geom_boxplot(aes(x = side, y = value)) +
+  facet_grid(k ~ unif_cov, scales = "free_y") +
+  labs(title = "k values with sd(res </> 0) - Gaussian(0, sd = 0.5) error distribution")
+
+plt_k_asymm_Gauss1 = df_k_asymm %>%  filter(err_distr == "Gaussian") %>%
+  ggplot() + 
+  geom_boxplot(aes(x = side, y = value)) +
+  facet_grid(k ~ unif_cov, scales = "free_y") +
+  labs(title = "k values with sd(res </> 0) - Gaussian(0, sd = 1) error distribution")
+
+
+plt_k_asymm_Gamma = df_k_asymm %>%  filter(err_distr == "Gamma_2_2") %>%
+  ggplot() + 
+  geom_boxplot(aes(x = side, y = value)) +
+  facet_grid(k ~ unif_cov, scales = "free_y") +
+  labs(title = "k values with sd(res </> 0) - Gamma(2, 2) error distribution")
+
+ggsave(plot = gridExtra::marrangeGrob(grobs = list(plt_k_asymm_Gauss1, plt_k_asymm_Gauss05, plt_k_asymm_Gamma), 
+                                      nrow = 1, ncol = 1, top = NULL), 
+       filename = "k_asymm.pdf", path = "sim_study_nonC-GBI/",
+       width = 6, height = 6)
+
+
+## Plot symm ----
+df_k_symm = cbind.data.frame(t(k_symm), sim_settings) %>% 
+  pivot_longer(1:100, names_to = "replicate", values_to = "value") %>% 
+  mutate(k = factor(k, levels = c("0.5", "init", "final")),
+         err_distr = factor(err_distr, levels = c("Gaussian", "Gaussian_0.5", "Gamma_2_2")),
+         replicate = as.integer(replicate),
+         side = "symm")
+
+plt_k_symm = df_k_symm %>%
+  ggplot() + 
+  geom_boxplot(aes(x = unif_cov, y = value)) +
+  facet_grid(k ~ err_distr, scales = "free_y")
+
+ggsave(plot = plt_k_symm, 
+       filename = "k_symm.pdf", path = "sim_study_nonC-GBI/",
+       width = 6, height = 6)
+
+
+## Plot together ----
+df_k_complete = bind_rows(df_k_TL %>% mutate(type = "TL"), df_k_asymm %>% mutate(type = "asymm"), df_k_symm %>% mutate(type = "symm")) %>% 
+  mutate(type = factor(type, levels = c("symm", "asymm", "TL"), labels = c("symm", "asymm sd", "asymm TL")))
+  
+plt_k_Gauss05 = df_k_complete %>% 
+  filter(err_distr == "Gaussian_0.5") %>%
+  ggplot() + 
+  geom_boxplot(aes(x = side, y = value, col = type)) +
+  facet_grid(k ~ unif_cov, scales = "free_y") +
+  labs(title = "k values across replicates - Gaussian(0, sd = 0.5) error distribution")
+
+plt_k_Gauss1 = df_k_complete %>% 
+  filter(err_distr == "Gaussian") %>%
+  ggplot() + 
+  geom_boxplot(aes(x = side, y = value, col = type)) +
+  facet_grid(k ~ unif_cov, scales = "free_y") +
+  labs(title = "k values across replicates - Gaussian(0, sd = 1) error distribution")
+
+plt_k_Gamma = df_k_complete %>% 
+  filter(err_distr == "Gamma_2_2") %>%
+  ggplot() + 
+  geom_boxplot(aes(x = side, y = value, col = type)) +
+  facet_grid(k ~ unif_cov, scales = "free_y") +
+  labs(title = "k values across replicates - Gamma(2, 2) error distribution")
+
+ggsave(plot = gridExtra::marrangeGrob(grobs = list(plt_k_Gauss1, plt_k_Gauss05, plt_k_Gamma), 
+                                      nrow = 1, ncol = 1, top = NULL), 
+       filename = "k_together.pdf", path = "sim_study_nonC-GBI/",
+       width = 9, height = 6)
