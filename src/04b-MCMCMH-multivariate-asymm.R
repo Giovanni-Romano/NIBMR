@@ -155,11 +155,11 @@ for (s in 1:nrow(sim_settings)){
       rownames(diagn) = c(outer(c("acf_thin", "rhat_thin", "ess_thin"), c(10, 5, 1), paste0))
       colnames(diagn) = paste0("beta", 1:p)
       
-      list(draws = draws, summ = summ, diagn = diagn, w = out_MCMC$w, k = k_multi)
+      list(draws = draws, summ = summ, diagn = diagn, w = out_MCMC$w, k = k_multi,
+           X = X, X_scaled = X_scaled, y = y)
       
     }
   
-  # res = simplify2array(res_tmp)
   res = res_tmp
   results[[s]] = res
   cat("Update: ", format(Sys.time()), "\t", sep = "")
