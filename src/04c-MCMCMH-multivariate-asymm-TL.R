@@ -84,8 +84,8 @@ for (s in 1:nrow(sim_settings)){
       varn = var(res_qr[res_qr < 0])
       mup = mean(res_qr[res_qr > 0]) - mean(res_qr)
       mun = mean(res_qr[res_qr < 0]) - mean(res_qr)
-      factorp = sqrt(2*(varp+mup^2))
-      factorn = sqrt(2*(varn+mun^2))
+      factorp = sqrt(varp+mup^2)
+      factorn = sqrt(varn+mun^2)
       
       k_multi = c( 
         k/factorn,
