@@ -18,9 +18,8 @@ nrep = 100
 
 # PARALLEL BACKEND ----
 library(doParallel); library(foreach)
-ncores = 8 #max(1, parallel::detectCores() - 1)
-cl = makeForkCluster(ncores)
-registerDoParallel(cl)
+ncores = 25 #max(1, parallel::detectCores() - 1)
+registerDoParallel(ncores)
 
 cat("Starting time: ", format(Sys.time()), "\n", sep = "")
 
@@ -165,5 +164,4 @@ for (s in 1:nrow(sim_settings)){
   cat("Update: ", format(Sys.time()), "\t", sep = "")
   cat(round(100*s/nrow(sim_settings), 2), "%\n", sep = "")
 }
-stopCluster(cl)
 saveRDS(results, "sim_study_nonC-GBI/02-w_unit_loss/sim_study_nonCalibrated_multiv_asymm_TL.RDS")
