@@ -3,7 +3,7 @@ source("src/01-utils.R")
 
 # TRUE BETA AND SAMPLE SIZE ----
 n = 1e3
-true_beta = c(0, -0.5, +0.7)
+true_beta = c(0, -1, +1.5)
 
 # SIMULATION SETTINGS ----
 error_distr = c("Gaussian", "Gamma_2_rad2", "Gaussian_rad2", "Gamma_2_1")
