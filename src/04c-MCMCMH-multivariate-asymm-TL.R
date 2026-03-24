@@ -6,9 +6,9 @@ n = 1e3
 true_beta = c(0, -0.5, +0.7)
 
 # SIMULATION SETTINGS ----
-error_distr = c("Gaussian", "Gaussian_0.5", "Gamma_2_2")
-covariate = c("0.5", "1", "asymm")
-k = c("0.5", "init", "final")
+error_distr = c("Gaussian", "Gamma_2_rad2", "Gaussian_rad2", "Gamma_2_1")
+covariate = c("Unif_rad2", "Gamma_1.5_1.5", "BVN")
+k = "final"
 sim_settings = as.matrix(expand.grid(error_distr, covariate, k))
 colnames(sim_settings) = c("err_distr", "unif_cov", "k")
 
@@ -38,26 +38,39 @@ for (s in 1:nrow(sim_settings)){
       rerr = switch(ed_s,
                     Gaussian = function(ndraws) rnorm(ndraws, 0, 1),
                     Gaussian_0.5 = function(ndraws) rnorm(ndraws, 0, 0.5),
+                    Gaussian_rad2 = function(ndraws) rnorm(ndraws, 0, sqrt(2)),
                     Gamma_2_2 = function(ndraws) rgamma(ndraws, 2, 2),
-                    Gamma_1.5_1.5 = function(ndraws) rgamma(ndraws, 1.5, 1.5),
-                    Gamma_1.5_3 = function(ndraws) rgamma(ndraws, 1.5, 3))
+                    Gamma_2_rad2 = function(ndraws) rgamma(ndraws, 2, sqrt(2)),
+                    Gamma_2_1 = function(ndraws) rgamma(ndraws, 2, 1))
       
       mode_shift = switch(ed_s,
                           Gaussian = 0,
                           Gaussian_0.5 = 0,
+                          Gaussian_rad2 = 0,
                           Gamma_2_2 = (2-1)/2,
                           Gamma_1.5_1.5 = (1.5-1)/1.5,
-                          Gamma_1.5_3 = (1.5-1)/3)
+                          Gamma_2_1 = (2-1)/1,
+                          Gamma_2_rad2 = (2-1)/sqrt(2))
       
       rcov = switch(cd_s,
                     "0.5" = function(ndraws) runif(ndraws, -0.5, 0.5),
                     "1" = function(ndraws) runif(ndraws, -1, 1),
-                    asymm = function(ndraws) runif(ndraws, 0, 2))
+                    asymm = function(ndraws) runif(ndraws, 0, 2),
+                    "Unif_rad2" = function(ndraws) runif(ndraws, -sqrt(2), sqrt(2)),
+                    "Gamma_1.5_1.5" = function(ndraws) rgamma(ndraws, 1.5, 1.5),
+                    "BVN" = function(ndraws) mvnfast::rmvn(ndraws, rep(0, 2), sigma = (26/12)*matrix(c(1, 0.75, 0.75, 1), nrow = 2), isChol = F))
       
       # DRAW COVARIATES
-      x1 = rcov(n)
-      x2 = rcov(n)
-      X = cbind(1, x1, x2)
+      if (cd_s != "BVN"){
+        x1 = rcov(n)
+        x2 = rcov(n)
+        X = cbind(1, x1, x2)
+      } else {
+        X.tmp = rcov(n)
+        x1 = X.tmp[ , 1]
+        x2 = X.tmp[ , 2]
+        X = cbind(1, X.tmp)
+      }
       mu_x1 = mean(x1); sd_x1 = sd(x1)
       mu_x2 = mean(x2); sd_x2 = sd(x2)
       X_scaled = cbind(1, (x1-mu_x1)/sd_x1, (x2-mu_x2)/sd_x2)
