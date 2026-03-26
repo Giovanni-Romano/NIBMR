@@ -27,7 +27,7 @@ loss_pop = function(beta, y, X, k, c= 1e-3, g = 1){
 }
 
 
-MCMC_MH = function(niter, X, y, k, c, p, beta0, prior_sd, asymm = F, debug = F){
+MCMC_MH = function(niter, X, y, k, c, p, beta0, prior_sd, asymm = F, debug = F, verbose = F){
   
   if (p != length(beta0)){stop("Length of beta0 is not equal to p")}
   
@@ -57,14 +57,14 @@ MCMC_MH = function(niter, X, y, k, c, p, beta0, prior_sd, asymm = F, debug = F){
   
   for (m in 1:niter){
     
-    if (debug & m %% (niter/10) == 0){
+    if (verbose & m %% (niter/10) == 0){
       cat(10 * m / (niter/10), "% \t")
     }
     
     if (m == 1){
       RM = log(2.38/sqrt(p))
     } else {
-      RM = log(sd_prop) + (1/m)^(1/2) * (acc/(m-1) - 0.234)
+      RM = log(sd_prop) + (1/m)^(3/4)*(acc/(m-1) - 0.234)
     }
     
     sd_prop = exp(RM); sd_prop_sample = c(sd_prop_sample, sd_prop)
