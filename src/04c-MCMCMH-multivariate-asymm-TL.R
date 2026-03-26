@@ -90,8 +90,6 @@ for (s in 1:nrow(sim_settings)){
                  "init" = kinit,
                  "final" = kfinal)
       
-      # I use 2*(..) so that if the err distribution is symmetric, then
-      # factorp = factorm = sd(res) and we have the original k
       varp = var(res_qr[res_qr > 0])
       varn = var(res_qr[res_qr < 0])
       mup = mean(res_qr[res_qr > 0]) - mean(res_qr)
@@ -104,23 +102,27 @@ for (s in 1:nrow(sim_settings)){
         k/factorp
       )
       
-      out_optim = sapply(c("Nelder-Mead", "BFGS", "CG", "L-BFGS-B", "SANN"),
-                         function(m){
-                           est = optim(par = c(0.1, -0.25, +0.4),
-                                       fn = function(b) sum(loss_asymm2(y - X_scaled%*%b, 
-                                                                        k_multi, 
-                                                                        1e-3)),
-                                       method = m)$par
-                           b0 = est[1]; b1 = est[2]; b2 = est[3]
-                           c(b0-b1*mu_x1/sd_x1-b2*mu_x2/sd_x2, b1/sd_x1, b2/sd_x2)
-                         }
-                         
+      out_optim_scaled = sapply(c("Nelder-Mead", "BFGS", "CG", "L-BFGS-B", "SANN"),
+                                function(m){
+                                  est = optim(par = c(-0.1, -0.25, +0.4),
+                                              fn = function(b) sum(loss_asymm2(y - X_scaled%*%b, 
+                                                                               k_multi, 
+                                                                               1e-3)),
+                                              method = m)$par
+                                  est
+                                }
+                                
       )
+      
+      out_optim = apply(out_optim_scaled, 2, function(est){
+        b0 = est[1]; b1 = est[2]; b2 = est[3]
+        c(b0-b1*mu_x1/sd_x1-b2*mu_x2/sd_x2, b1/sd_x1, b2/sd_x2)
+      })
       
       out_MCMC = MCMC_MH(niter = niter, X = X_scaled, y = y, 
                          k = k_multi, 
-                         c = 1e-3, asymm = T,
-                         p = 3,  beta0 = c(0.1, -0.25, +0.4), prior_sd = 1/3)
+                         c = 1e-3, asymm = T, verbose = F,
+                         p = 3,  beta0 = out_optim_scaled[ , "SANN"], prior_sd = 1)
       
       draws_tmp = out_MCMC$beta[-(1:1000), ]
       draws = draws_tmp
@@ -128,8 +130,8 @@ for (s in 1:nrow(sim_settings)){
       draws[ , 2] = draws_tmp[ , 2]/sd_x1
       draws[ , 3] = draws_tmp[ , 3]/sd_x2
       
-      draws_thin5 = draws[seq(1, 1e4, by = 5), ]
-      draws_thin10 = draws[seq(1, 1e4, by = 10), ]
+      draws_thin5 = draws[seq(10, 1e4, by = 5), ]
+      draws_thin10 = draws[seq(10, 1e4, by = 10), ]
       
       summ = rbind(apply(draws_thin10, 2,
                          function(D){
@@ -168,7 +170,8 @@ for (s in 1:nrow(sim_settings)){
       colnames(diagn) = paste0("beta", 1:p)
       
       list(draws = draws, summ = summ, diagn = diagn, w = out_MCMC$w, k = k_multi,
-           X = X, X_scaled = X_scaled, y = y)
+           X = X, X_scaled = X_scaled, y = y,
+           sd_prop = out_MCMC$sd_prop, alfa = out_MCMC$alfa)
       
     }
   
