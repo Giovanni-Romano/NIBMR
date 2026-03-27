@@ -8,7 +8,7 @@ true_beta = c(0, -1, +1.5)
 # SIMULATION SETTINGS ----
 error_distr = c("Gaussian", "Gamma_2_rad2", "Gaussian_rad2", "Gamma_2_1")
 covariate = c("Unif_rad2", "Gamma_1.5_1.5", "BVN")
-k = "final"
+k = "init"
 sim_settings = as.matrix(expand.grid(error_distr, covariate, k))
 colnames(sim_settings) = c("err_distr", "unif_cov", "k")
 
@@ -177,4 +177,4 @@ for (s in 1:nrow(sim_settings)){
   cat("Update: ", format(Sys.time()), "\t", sep = "")
   cat(round(100*s/nrow(sim_settings), 2), "%\n", sep = "")
 }
-saveRDS(results, "sim_study_nonC-GBI/02-w_unit_loss_SNR/sim_study_nonCalibrated_multiv_asymm_sd.RDS")
+saveRDS(results, "sim_study_nonC-GBI/02-w_unit_loss_SNR/sim_study_nonCalibrated_multiv_asymm_sd_init.RDS")
