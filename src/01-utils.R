@@ -109,3 +109,66 @@ MCMC_MH = function(niter, X, y, k, c, p, beta0, prior_sd, asymm = F, debug = F, 
               acc_prop = acc/niter, alfa = alfa_sample, sd_prop = sd_prop_sample,
               w = w))
 }
+
+
+# Other objects ----
+H_i = function(beta, y_i, x_i, k, c){
+  eps = drop((y_i - drop(crossprod(x_i, beta))))
+  k_i = k[(eps>0)+1]
+  u = k_i*eps
+  
+  F1 = exp(sqrt(c) - sqrt(u^2+c)) * ((u^2)/(u^2+c) - c/((u^2+c)^(3/2)))
+  F2 = outer(-k_i*x_i, -k_i*x_i)
+  
+  return(F1 * F2)
+}
+
+score_i = function(beta, y_i, x_i, k, c){
+  eps = drop((y_i - crossprod(x_i, beta)))
+  k_i = k[(eps>0)+1]
+  u = k_i*eps
+  
+  F1 = -exp(sqrt(c) - sqrt(u^2+c)) * u/sqrt(u^2+c)
+  F2 = -k_i*x_i
+  
+  return(F1 * F2)
+}
+
+# DR Decomposition ----
+## this function returns the nonlinear Demmler-Reinsch spline basis functions
+# Construct Demmler Reinsch basis according to Bach and Klein 2024
+construct_DR_basis <- function(x, d = 10, m = 3, penalty = 2, rescale = TRUE) {
+  
+  require(mgcv)
+  
+  n <- length(x)
+  # set up P-spline design
+  fit=smoothCon(s(x,bs="ps",k=d+2),data=data.frame(x),scale.penalty=FALSE)
+  
+  B=fit[[1]]$X
+  K=fit[[1]]$S[[1]]
+  
+  # set up constraint matrix
+  C <- t(cbind(1, scale(x))) %*% B
+  V0 <- svd(C,nv=d+2)$v[, 3:(d+2), drop = FALSE]
+  
+  # transformed penalty and gram matrices
+  K_tilde <- t(V0) %*% K %*% V0
+  G_tilde <- t(V0) %*% (t(B) %*% B / n) %*% V0
+  # solve generalized eigenvalue problem
+  eig <- geigen::geigen(G_tilde, K_tilde)
+  A <- eig$vectors
+  Trf <- V0 %*% A
+  
+  # perform change of basis
+  Z <- B %*% Trf
+  # normalize to unit norm
+  scaling_factor <- 1
+  if (rescale) {
+    scaling_factor <- sqrt(n / sum(Z^2))
+    Z <- Z * scaling_factor
+    Trf <- Trf * scaling_factor
+  }
+  # you don't really need the full list but I returned everything and kept what I needed
+  list(Z = Z, Trafo = Trf, Gram = G_tilde, Penalty = K_tilde)
+}
