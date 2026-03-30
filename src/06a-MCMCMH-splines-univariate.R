@@ -42,10 +42,6 @@ for (s in 1:nrow(sim_settings)){
                     Gaussian = function(ndraws, var_eta, SNR) rnorm(ndraws, 0, sd = sqrt(var_eta/SNR)),
                     Gamma = function(ndraws, var_eta, SNR) rgamma(ndraws, 2, sqrt(2*SNR/var_eta)))
       
-      mode_shift = switch(ed_s,
-                          Gaussian = 0,
-                          Gamma = (2 - 1) / sqrt(2*SNR/var_eta))
-      
       rcov = switch(cd_s,
                     "Unif_rad2" = function(ndraws) runif(ndraws, -sqrt(2), sqrt(2)),
                     "Gamma_1.5_1.5" = function(ndraws) rgamma(ndraws, 1.5, 1.5))
@@ -59,9 +55,15 @@ for (s in 1:nrow(sim_settings)){
       x1 = rcov(n)
       mu_x1 = mean(x1); sd_x1 = sd(x1)
       eta = transf(x1)
+      var_eta = var(eta)
+      
+      # Mode shift
+      mode_shift = switch(ed_s,
+                          Gaussian = 0,
+                          Gamma = (2 - 1) / sqrt(2*SNR/var_eta))
       
       # DRAW RESPONSE
-      y = eta + rerr(n, var(eta), SNR = snr_s) - mode_shift
+      y = eta + rerr(n, var_eta, SNR = snr_s) - mode_shift
       
       # CREATE DESIGN MATRIX
       DR <- construct_DR_basis(x1, d = 10)
@@ -159,7 +161,7 @@ for (s in 1:nrow(sim_settings)){
       
       p = length(true_beta)
       rownames(diagn) = c(outer(c("acf_thin", "rhat_thin", "ess_thin"), c(10, 5, 1), paste0))
-      colnames(diagn) = paste0("beta", 1:p)
+      colnames(diagn) = c(paste0("beta", 1:p), paste0("gamma", 1:ncol(Z)))
       
       list(draws = draws, summ = summ, diagn = diagn, w = out_MCMC$w, k = k_multi,
            x1 = x1, X_scaled = X_scaled, y = y, Z = Z, true_beta = true_beta,
