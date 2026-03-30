@@ -3,7 +3,7 @@ source("src/01-utils.R")
 
 # TRUE BETA AND SAMPLE SIZE ----
 n = 1e3
-true_beta = c(0, -1, +1.5)
+true_beta = c(0, +1.5)
 
 # SIMULATION SETTINGS ----
 error_distr = c("Gaussian", "Gamma")
@@ -103,8 +103,8 @@ for (s in 1:nrow(sim_settings)){
       )
       
       out_optim = apply(out_optim_scaled, 2, function(est){
-        b0 = est[1]; b1 = est[2]; b2 = est[3]
-        c(b0-b1*mu_x1/sd_x1-b2*mu_x2/sd_x2, b1/sd_x1, b2/sd_x2)
+        b0 = est[1]; b1 = est[2]
+        c(b0-b1*mu_x1/sd_x1, b1/sd_x1, est[-(1:2)])
       })
       
       out_MCMC = MCMC_MH(niter = niter, X = X_scaled, y = y, 
@@ -120,7 +120,7 @@ for (s in 1:nrow(sim_settings)){
       draws_thin5 = draws[seq(5, 1e4, by = 5), ]
       draws_thin10 = draws[seq(10, 1e4, by = 10), ]
       
-      fit_eta_thin5 = draws_thin5 %*% t(X_scaled)5 = t(draws_thin5 %*% t(X_scaled))
+      fit_eta_thin5 = t(draws_thin5 %*% t(X_scaled))
       fit_eta_thin10 = t(draws_thin10 %*% t(X_scaled))
       dimnames(fit_eta_thin5) = list("Unit" = 1:n, "Iter" = 1:2e3)
       dimnames(fit_eta_thin10) = list("Unit" = 1:n, "Iter" = 1:1e3)
