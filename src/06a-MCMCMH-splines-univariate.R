@@ -174,4 +174,4 @@ for (s in 1:nrow(sim_settings)){
   cat("Update: ", format(Sys.time()), "\t", sep = "")
   cat(round(100*s/nrow(sim_settings), 2), "%\n", sep = "")
 }
-saveRDS(results, "sim_study_nonC-GBI/splines/sim_study_nonCalibrated_multiv_asymm_TL_init.RDS")
+saveRDS(results, "sim_study_nonC-GBI/splines_univ/sim_study_nonCalibrated_asymm_TL_init.RDS")
