@@ -41,14 +41,36 @@ MCMC_MH = function(niter,
   loss = ifelse(asymm, loss_asymm2, loss_symm)
   
   
+  if (verbose) {cat("Start 50-fold CV \t")}
   w_num = 1/2
-  LOO <- sapply(1:n, function(i) {
-    est <- optim(par = beta0,
-                 fn = function(b) sum(loss(y[-i] - X[-i, ] %*% b, k, 1e-3)),
-                 method = "BFGS")$par
-    loss(y[i] - drop(X[i, ] %*% est), k, 1e-3)
+  
+  set.seed(123)  # for reproducibility
+  
+  K <- 50
+  fold_id <- sample(rep(1:K, length.out = n))
+  CV10 <- sapply(1:K, function(f) {
+    test_idx  <- which(fold_id == f)
+    train_idx <- setdiff(1:n, test_idx)
+    
+    est <- optim(
+      par = beta0,
+      fn = function(b) sum(loss(y[train_idx] - X[train_idx, ] %*% b, k, 1e-3)),
+      method = "BFGS"
+    )$par
+    
+    sum(loss(y[test_idx] - X[test_idx, ] %*% est, k, 1e-3))
   })
-  w = w_num / (sum(LOO)/n)
+  mean_cv10 <- sum(CV10) / n
+  w = w_num / mean_cv10
+  if (verbose) {cat("End CV. \n\n")}
+  
+  # LOO <- sapply(1:n, function(i) {
+  #   est <- optim(par = beta0,
+  #                fn = function(b) sum(loss(y[-i] - X[-i, ] %*% b, k, 1e-3)),
+  #                method = "BFGS")$par
+  #   loss(y[i] - drop(X[i, ] %*% est), k, 1e-3)
+  # })
+  # w = w_num / (sum(LOO)/n)
   
   
   beta_sample = matrix(NA, nrow = niter, ncol = P)
@@ -60,14 +82,14 @@ MCMC_MH = function(niter,
   last = beta_init
   
   tau_sample = matrix(NA, nrow = niter, ncol = 2*p)
-  tau = rep(1, 1+2*p)
+  tau = rep(1, 2*p)
   tau_idx = c(1:p, p+rep(1:p, d))
   
   acc = 0
   alfa_sample = rep(NA, niter)
   sd_prop_sample = c()
   
-  Sigma0 = diag(1, nrow = p)
+  Sigma0 = diag(1, nrow = P)
   cholSigma0 = chol(Sigma0)
   
   for (m in 1:niter){
@@ -77,7 +99,7 @@ MCMC_MH = function(niter,
     }
     
     if (m == 1){
-      RM = log(2.38/sqrt(1+p+sum(d)))
+      RM = log(2.38/sqrt(P))
     } else {
       RM = log(sd_prop) + (1/m)^(3/4)*(acc/(m-1) - 0.234)
     }
