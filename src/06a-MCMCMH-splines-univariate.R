@@ -3,11 +3,10 @@ source("src/01-utils.R")
 
 # TRUE BETA AND SAMPLE SIZE ----
 n = 1e3
-true_beta = c(0, +1.5)
 
 # SIMULATION SETTINGS ----
 error_distr = c("Gaussian", "Gamma")
-cov_distr = c("Unif_rad2", "Beta_1.25_2") #"Gamma_1.5_1.5") #, "BVN")
+cov_distr = c("Unif_rad2", "Beta_2_4") #"Gamma_1.5_1.5") #, "BVN")
 transform_x = c("parabola", "cubic", "trigonometric")
 SNR = c(2, 1)
 sim_settings = as.matrix(expand.grid(error_distr, cov_distr, transform_x, SNR))
@@ -61,7 +60,7 @@ for (s in 1:nrow(sim_settings)){
         tryCatch(
           {
             # DRAW COVARIATES
-            x1 = rgamma(n, 1.5, 1) #rcov(n)
+            x1 = rcov(n)
             mu_x1 = mean(x1); sd_x1 = sd(x1)
             eta = transf(x1)
             var_eta = var(eta)
