@@ -124,21 +124,18 @@ for (s in 1:nrow(sim_settings)){
                                 
       )
       
-      out_optim = apply(out_optim_scaled, 2, function(est){
-        b0 = est[1]; b1 = est[2]
-        c(b0-b1*mu_x1/sd_x1, b1/sd_x1, est[-(1:2)])
-      })
-      
+      p = 1; d = 10
       out_MCMC = MCMC_MH(niter = niter, X = X_scaled, y = y, 
                          k = k_multi, c = 1e-3, 
-                         p = 1, d = 10,
+                         p = p, d = d,
                          asymm = T, verbose = F,
                          beta0 = out_optim_scaled[ , "SANN"])
       
       draws = out_MCMC$beta[-(1:1000), ]
+      draws_thin5 = draws[seq(5, niter-1000, by = 5), ]
+      draws_thin10 = draws[seq(10, niter-1000, by = 10), ]
       
-      draws_thin5 = draws[seq(5, 1e4, by = 5), ]
-      draws_thin10 = draws[seq(10, 1e4, by = 10), ]
+      draws_tau = out_MCMC$tau[-(1:1000)]
       
       fit_eta_thin5 = t(draws_thin5 %*% t(X_scaled))
       fit_eta_thin10 = t(draws_thin10 %*% t(X_scaled))
@@ -165,7 +162,7 @@ for (s in 1:nrow(sim_settings)){
                              q025 = q025, q975 = q975,
                              HDI_L1 = HDI_L1, HDI_U1 = HDI_U1, HDI_L2 = HDI_L2, HDI_U2 = HDI_U2)
                          }
-      ), t(out_optim))
+      ), t(out_optim_scaled))
       
       diagn = rbind(apply(draws_thin10, 2, function(x) acf(x, plot = F)[[1]][2]),
                     apply(draws_thin10, 2, posterior::rhat),
@@ -177,11 +174,9 @@ for (s in 1:nrow(sim_settings)){
                     apply(draws, 2, posterior::rhat),
                     apply(draws, 2, posterior::ess_basic))
       
-      p = length(true_beta)
       rownames(diagn) = c(outer(c("acf_thin", "rhat_thin", "ess_thin"), c(10, 5, 1), paste0))
-      colnames(diagn) = c(paste0("beta", 1:p), paste0("gamma", 1:ncol(Z)))
       
-      list(draws = draws, draws_tau = tau,
+      list(draws = draws, draws_tau = draws_tau,
            summ = summ, diagn = diagn, 
            w = out_MCMC$w, k = k_multi,
            x1 = x1, X_scaled = X_scaled, y = y, Z = Z,
