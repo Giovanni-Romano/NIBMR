@@ -43,7 +43,7 @@ for (s in 1:nrow(sim_settings)){
       
       rcov = switch(cd_s,
                     "Unif_rad2" = function(ndraws) runif(ndraws, -sqrt(2), sqrt(2)),
-                    "Beta_1.25_2" = function(ndraws) runif(ndraws, 1.25, 2))
+                    "Beta_2_4" = function(ndraws) runif(ndraws, 2, 4))
       
       transf = switch(tr_s,
                       "parabola" = function(x) x^2,
