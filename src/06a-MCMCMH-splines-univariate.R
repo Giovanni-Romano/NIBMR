@@ -130,14 +130,12 @@ for (s in 1:nrow(sim_settings)){
       })
       
       out_MCMC = MCMC_MH(niter = niter, X = X_scaled, y = y, 
-                         k = k_multi, 
-                         c = 1e-3, asymm = T, verbose = F,
-                         p = 12,  beta0 = out_optim_scaled[ , "SANN"], prior_sd = 1)
+                         k = k_multi, c = 1e-3, 
+                         p = 1, d = 10,
+                         asymm = T, verbose = F,
+                         beta0 = out_optim_scaled[ , "SANN"])
       
-      draws_tmp = out_MCMC$beta[-(1:1000), ]
-      draws = draws_tmp
-      draws[ , 1] = draws_tmp[ , 1] - draws_tmp[ , 2]*mu_x1/sd_x1 
-      draws[ , 2] = draws_tmp[ , 2]/sd_x1
+      draws = out_MCMC$beta[-(1:1000), ]
       
       draws_thin5 = draws[seq(5, 1e4, by = 5), ]
       draws_thin10 = draws[seq(10, 1e4, by = 10), ]
@@ -183,8 +181,10 @@ for (s in 1:nrow(sim_settings)){
       rownames(diagn) = c(outer(c("acf_thin", "rhat_thin", "ess_thin"), c(10, 5, 1), paste0))
       colnames(diagn) = c(paste0("beta", 1:p), paste0("gamma", 1:ncol(Z)))
       
-      list(draws = draws, summ = summ, diagn = diagn, w = out_MCMC$w, k = k_multi,
-           x1 = x1, X_scaled = X_scaled, y = y, Z = Z, true_beta = true_beta,
+      list(draws = draws, draws_tau = tau,
+           summ = summ, diagn = diagn, 
+           w = out_MCMC$w, k = k_multi,
+           x1 = x1, X_scaled = X_scaled, y = y, Z = Z,
            fit = fit_eta_thin10,
            setting = s_s, n_retry = n_retry,
            sd_prop = out_MCMC$sd_prop, alfa = out_MCMC$alfa)
