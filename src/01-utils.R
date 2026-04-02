@@ -137,13 +137,13 @@ score_i = function(beta, y_i, x_i, k, c){
 # DR Decomposition ----
 ## this function returns the nonlinear Demmler-Reinsch spline basis functions
 # Construct Demmler Reinsch basis according to Bach and Klein 2024
-construct_DR_basis <- function(x, d = 10, m = 3, penalty = 2, rescale = TRUE) {
+construct_DR_basis <- function(x, d = 10, rescale = TRUE) {
   
   require(mgcv)
   
   n <- length(x)
   # set up P-spline design
-  fit=smoothCon(s(x,bs="ps",k=d+2),data=data.frame(x),scale.penalty=FALSE)
+  fit=smoothCon(s(x, bs="ps", k=d+2, m = c(2, 2)), data=data.frame(x),scale.penalty=FALSE)
   
   B=fit[[1]]$X
   K=fit[[1]]$S[[1]]
