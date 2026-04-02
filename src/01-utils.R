@@ -27,9 +27,14 @@ loss_pop = function(beta, y, X, k, c= 1e-3, g = 1){
 }
 
 
-MCMC_MH = function(niter, X, y, k, c, p, beta0, prior_sd, asymm = F, debug = F, verbose = F){
+MCMC_MH = function(niter, 
+                   X, y, k, c, p, d, beta0,
+                   a_tau = 1e-3, b_tau = 1e-3,
+                   asymm = T, debug = F, verbose = F){
   
-  if (p != length(beta0)){stop("Length of beta0 is not equal to p")}
+  P = 1+p+sum(d) # total size of the design matrix
+  
+  if (P != length(beta0)){stop("Length of beta0 is not equal to p")}
   
   n = nrow(X)
   
@@ -45,9 +50,19 @@ MCMC_MH = function(niter, X, y, k, c, p, beta0, prior_sd, asymm = F, debug = F, 
   })
   w = w_num / (sum(LOO)/n)
   
-  beta_sample = matrix(NA, nrow = niter, ncol = p)
+  
+  beta_sample = matrix(NA, nrow = niter, ncol = P)
+  colnames(beta_sample) = c("beta0", 
+                            paste0("beta_lin", 1:p), 
+                            unlist(lapply(seq_len(p), function(i) {paste0("beta_nonlin", i, ".", seq_len(d[i]))}))
+                            )
   beta_init = beta0
   last = beta_init
+  
+  tau_sample = matrix(NA, nrow = niter, ncol = 2*p)
+  tau = rep(1, 1+2*p)
+  tau_idx = c(1:p, p+rep(1:p, d))
+  
   acc = 0
   alfa_sample = rep(NA, niter)
   sd_prop_sample = c()
@@ -62,7 +77,7 @@ MCMC_MH = function(niter, X, y, k, c, p, beta0, prior_sd, asymm = F, debug = F, 
     }
     
     if (m == 1){
-      RM = log(2.38/sqrt(p))
+      RM = log(2.38/sqrt(1+p+sum(d)))
     } else {
       RM = log(sd_prop) + (1/m)^(3/4)*(acc/(m-1) - 0.234)
     }
@@ -88,8 +103,10 @@ MCMC_MH = function(niter, X, y, k, c, p, beta0, prior_sd, asymm = F, debug = F, 
       cat("loglik last:", loglik_last, "\t | \t loglik prop:", loglik_prop, "\n")
     }
     
-    target_last = loglik_last - 0.5*sum(last^2/(prior_sd^2))
-    target_prop = loglik_prop - 0.5*sum(prop^2/(prior_sd^2))
+    tau_tmp = tau[tau_idx]
+    
+    target_last = loglik_last - 0.5*sum(last[-1]^2/(tau_tmp^2))
+    target_prop = loglik_prop - 0.5*sum(prop[-1]^2/(tau_tmp^2))
     
     alfa = alfa_sample[m] = exp(min(target_prop - target_last, 0))
     u = runif(1, 0, 1)
@@ -103,9 +120,18 @@ MCMC_MH = function(niter, X, y, k, c, p, beta0, prior_sd, asymm = F, debug = F, 
       is_acc = 0
     }
     acc = acc + is_acc
+    
+    
+    # Sample tau
+    for (j in 1:(2*p)){
+      beta_tmp = beta_sample[m, 1+which(tau_idx == j)]
+      tau_sample[m, ] = 1/rgamma(1, 
+                                 shape = a_tau + c(rep(1:p), d)[j]/2,
+                                 rate = b_tau + sum(beta_tmp^2)/2)
+    }
   }
   
-  return(list(beta = beta_sample, 
+  return(list(beta = beta_sample, tau = tau_sample,
               acc_prop = acc/niter, alfa = alfa_sample, sd_prop = sd_prop_sample,
               w = w))
 }
