@@ -7,7 +7,7 @@ true_beta = c(0, +1.5)
 
 # SIMULATION SETTINGS ----
 error_distr = c("Gaussian", "Gamma")
-cov_distr = c("Unif_rad2", "Gamma_1.5_1.5") #, "BVN")
+cov_distr = c("Unif_rad2", "Beta_1.25_2") #"Gamma_1.5_1.5") #, "BVN")
 transform_x = c("parabola", "cubic", "trigonometric")
 SNR = c(2, 1)
 sim_settings = as.matrix(expand.grid(error_distr, cov_distr, transform_x, SNR))
@@ -44,36 +44,57 @@ for (s in 1:nrow(sim_settings)){
       
       rcov = switch(cd_s,
                     "Unif_rad2" = function(ndraws) runif(ndraws, -sqrt(2), sqrt(2)),
-                    "Gamma_1.5_1.5" = function(ndraws) rgamma(ndraws, 1.5, 1.5))
+                    "Beta_1.25_2" = function(ndraws) runif(ndraws, 1.25, 2))
       
       transf = switch(tr_s,
                       "parabola" = function(x) x^2,
                       "cubic" = function(x) x^3,
                       "trigonometric" = function(x) sin(2*(4*x - 2)) + 2*exp(-16^2*(x-0.5)^2))
       
-      # DRAW COVARIATES
-      x1 = rcov(n)
-      mu_x1 = mean(x1); sd_x1 = sd(x1)
-      eta = transf(x1)
-      var_eta = var(eta)
       
-      # Mode shift
-      mode_shift = switch(ed_s,
-                          Gaussian = 0,
-                          Gamma = (2 - 1) / sqrt(2*SNR/var_eta))
+      # Use tryCatch to avoid weird datasets with outliers on x and hence singular Z
+      n_retry <- 0L
       
-      # DRAW RESPONSE
-      y = eta + rerr(n, var_eta, SNR = snr_s) - mode_shift
+      stopTry = FALSE
       
-      # CREATE DESIGN MATRIX
-      DR <- construct_DR_basis(x1, d = 10)
-      Z <- DR$Z   # nonlinear DR basis
-      X_scaled <- cbind(1, (x1 - mu_x1)/sd_x1, Z)
+      repeat {
+        tryCatch(
+          {
+            # DRAW COVARIATES
+            x1 = rgamma(n, 1.5, 1) #rcov(n)
+            mu_x1 = mean(x1); sd_x1 = sd(x1)
+            eta = transf(x1)
+            var_eta = var(eta)
+            
+            # Mode shift
+            mode_shift = switch(ed_s,
+                                Gaussian = 0,
+                                Gamma = (2 - 1) / sqrt(2*SNR/var_eta))
+            
+            # DRAW RESPONSE
+            y = eta + rerr(n, var_eta, SNR = snr_s) - mode_shift
+            
+            # CREATE DESIGN MATRIX
+            DR <- construct_DR_basis(x1, d = 10)
+            Z <- DR$Z   # nonlinear DR basis
+            X_scaled <- cbind(1, (x1 - mu_x1)/sd_x1, Z)
+            
+            # OPTIMAL K
+            const = (n^(5/12)) * (log(n)^(7/12)) / (n^(7/12))
+            kinit = (n/const)^(1/7)
+            res_qr = quantreg::rq(y ~ -1 + X_scaled, tau = 0.5)$residuals
+            
+            stopTry = TRUE
+          }, 
+          error = function(e) {
+            n_retry <<- n_retry + 1L
+            NULL
+          })
+        
+        if (stopTry) break
+      }
       
-      # OPTIMAL K
-      const = (n^(5/12)) * (log(n)^(7/12)) / (n^(7/12))
-      kinit = (n/const)^(1/7)
-      res_qr = quantreg::rq(y ~ -1 + X_scaled, tau = 0.5)$residuals
+      
       # kfinal = kinit * (n^(1/7))
       k = switch(k_s,
                  "0.5" = 0.5,
@@ -166,7 +187,7 @@ for (s in 1:nrow(sim_settings)){
       list(draws = draws, summ = summ, diagn = diagn, w = out_MCMC$w, k = k_multi,
            x1 = x1, X_scaled = X_scaled, y = y, Z = Z, true_beta = true_beta,
            fit = fit_eta_thin10,
-           setting = s_s,
+           setting = s_s, n_retry = n_retry,
            sd_prop = out_MCMC$sd_prop, alfa = out_MCMC$alfa)
       
     }
