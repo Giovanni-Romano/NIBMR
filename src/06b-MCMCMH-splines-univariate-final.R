@@ -43,12 +43,13 @@ for (s in 1:nrow(sim_settings)){
       
       rcov = switch(cd_s,
                     "Unif_rad2" = function(ndraws) runif(ndraws, -sqrt(2), sqrt(2)),
-                    "Beta_2_4" = function(ndraws) runif(ndraws, 2, 4))
+                    "Beta_2_4" = function(ndraws) 2*sqrt(2)*(rbeta(ndraws, 2, 4)-0.5))
       
       transf = switch(tr_s,
                       "parabola" = function(x) x^2,
                       "cubic" = function(x) x^3,
-                      "trigonometric" = function(x) sin(2*(4*x - 2)) + 2*exp(-16^2*(x-0.5)^2))
+                      "trigonometric" = function(x) sin(2.5*x) + 2*exp(-(5^2)*((x)^2))
+                      )
       
       
       # Use tryCatch to avoid weird datasets with outliers on x and hence singular Z
