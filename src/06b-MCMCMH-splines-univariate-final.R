@@ -138,11 +138,6 @@ for (s in 1:nrow(sim_settings)){
       
       draws_tau = out_MCMC$tau[-(1:1000)]
       
-      fit_eta_thin5 = t(draws_thin5 %*% t(X_scaled))
-      fit_eta_thin10 = t(draws_thin10 %*% t(X_scaled))
-      dimnames(fit_eta_thin5) = list("Unit" = 1:n, "Iter" = 1:2e3)
-      dimnames(fit_eta_thin10) = list("Unit" = 1:n, "Iter" = 1:1e3)
-      
       summ = rbind(apply(draws_thin10, 2,
                          function(D){
                            mean_b = mean(D)
@@ -181,7 +176,6 @@ for (s in 1:nrow(sim_settings)){
            summ = summ, diagn = diagn, 
            w = out_MCMC$w, k = k_multi,
            x1 = x1, X_scaled = X_scaled, y = y, Z = Z,
-           fit = fit_eta_thin10,
            setting = s_s, n_retry = n_retry,
            sd_prop = out_MCMC$sd_prop, alfa = out_MCMC$alfa)
       
