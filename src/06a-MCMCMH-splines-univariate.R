@@ -53,7 +53,7 @@ for (s in 1:nrow(sim_settings)){
       transf = switch(tr_s,
                       "parabola" = function(x) x^2,
                       "cubic" = function(x) x^3,
-                      "trigonometric" = function(x) sin(2.5*x) + 2*exp(-(5^2)*((x)^2))
+                      "trigonometric" = function(x) sin(2.5*x) + 3*exp(-(5^2)*((x)^2))
       )
       
       
