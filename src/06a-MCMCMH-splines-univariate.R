@@ -19,6 +19,8 @@ colnames(sim_settings) = c("err_distr", "cov_distr", "transf_x", "SNR")
 results = vector("list", nrow(sim_settings))
 niter = 11e3
 nrep = 100
+# Number of splines
+d = 20
 
 # PARALLEL BACKEND ----
 library(doParallel); library(foreach); library(doRNG)
@@ -80,7 +82,7 @@ for (s in 1:nrow(sim_settings)){
             y = eta + rerr(n, var_eta, SNR = snr_s) - mode_shift
             
             # CREATE DESIGN MATRIX
-            DR <- construct_DR_basis(x1, d = 20)
+            DR <- construct_DR_basis(x1, d = d)
             Z <- DR$Z   # nonlinear DR basis
             X_scaled <- cbind(1, (x1 - mu_x1)/sd_x1, Z)
             
@@ -130,7 +132,7 @@ for (s in 1:nrow(sim_settings)){
                                 
       )
       
-      p = 1; d = 10
+      p = 1
       out_MCMC = MCMC_MH(niter = niter, X = X_scaled, y = y, 
                          k = k_multi, c = 1e-3, 
                          p = p, d = d,
