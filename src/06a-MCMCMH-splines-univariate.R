@@ -1,7 +1,10 @@
 rm(list = ls())
 source("src/01-utils.R")
 
-# TRUE BETA AND SAMPLE SIZE ----
+# READ TYPE OF K ----
+k_s = commandArgs(trailingOnly = TRUE)
+
+# SAMPLE SIZE ----
 n = 1e3
 
 # SIMULATION SETTINGS ----
@@ -17,7 +20,7 @@ niter = 11e3
 nrep = 100
 
 # PARALLEL BACKEND ----
-library(doParallel); library(foreach)
+library(doParallel); library(foreach); library(doRNG)
 ncores = 25 #max(1, parallel::detectCores() - 1)
 registerDoParallel(ncores)
 
@@ -30,11 +33,12 @@ for (s in 1:nrow(sim_settings)){
   cd_s = unname(s_s[2])
   tr_s = unname(s_s[3])
   snr_s = as.numeric(unname(s_s[4]))
-  k_s = "init"
+  
   
   res_tmp = foreach(
     rep      = 1:nrep,
-    .packages = c("quantreg", "HDInterval")) %dopar% {
+    .packages = c("quantreg", "HDInterval"),
+    .options.RNG = 76131) %dorng% {
       
       # DEFINE ERROR SAMPLER
       rerr = switch(ed_s,
@@ -186,4 +190,7 @@ for (s in 1:nrow(sim_settings)){
   cat("Update: ", format(Sys.time()), "\t", sep = "")
   cat(round(100*s/nrow(sim_settings), 2), "%\n", sep = "")
 }
-saveRDS(results, "sim_study_nonC-GBI/splines_univ/sim_study_nonCalibrated_asymm_TL_init.RDS")
+
+SAVE_PATH = paste0("sim_study_nonC-GBI/splines_univ/sim_study_nonCalibrated_asymm_TL_",
+                   k_s, ".RDS")
+saveRDS(results, SAVE_PATH)
