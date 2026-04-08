@@ -86,6 +86,7 @@ for (s in 1:nrow(sim_settings)){
             # OPTIMAL K
             const = (n^(5/12)) * (log(n)^(7/12)) / (n^(7/12))
             kinit = (n/const)^(1/7)
+            kfinal = kinit * (n^(1/7))
             res_qr = quantreg::rq(y ~ -1 + X_scaled, tau = 0.5)$residuals
             
             stopTry = TRUE
@@ -99,7 +100,6 @@ for (s in 1:nrow(sim_settings)){
       }
       
       
-      # kfinal = kinit * (n^(1/7))
       k = switch(k_s,
                  "0.5" = 0.5,
                  "init" = kinit,
