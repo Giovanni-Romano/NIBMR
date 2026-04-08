@@ -141,7 +141,7 @@ for (s in 1:nrow(sim_settings)){
       draws_thin5 = draws[seq(5, niter-1000, by = 5), ]
       draws_thin10 = draws[seq(10, niter-1000, by = 10), ]
       
-      draws_tau = out_MCMC$tau[-(1:1000)]
+      draws_tau = out_MCMC$tau[-(1:1000), ]
       
       summ = rbind(apply(draws_thin10, 2,
                          function(D){
