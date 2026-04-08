@@ -3,6 +3,7 @@ source("src/01-utils.R")
 
 # READ TYPE OF K ----
 k_s = commandArgs(trailingOnly = TRUE)
+cat("k type: ", k_s, "\n\n", sep = "")
 
 # SAMPLE SIZE ----
 n = 1e3
