@@ -147,8 +147,8 @@ MCMC_MH = function(niter,
     # Sample tau
     for (j in 1:(2*p)){
       beta_tmp = beta_sample[m, 1+which(tau_idx == j)]
-      tau_sample[m, ] = 1/rgamma(1, 
-                                 shape = a_tau + c(rep(1:p), d)[j]/2,
+      tau_sample[m, j] = 1/rgamma(1, 
+                                 shape = a_tau + c(rep(1, p), d)[j]/2,
                                  rate = b_tau + sum(beta_tmp^2)/2)
     }
   }
