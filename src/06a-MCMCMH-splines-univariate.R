@@ -80,7 +80,7 @@ for (s in 1:nrow(sim_settings)){
             y = eta + rerr(n, var_eta, SNR = snr_s) - mode_shift
             
             # CREATE DESIGN MATRIX
-            DR <- construct_DR_basis(x1, d = 10)
+            DR <- construct_DR_basis(x1, d = 20)
             Z <- DR$Z   # nonlinear DR basis
             X_scaled <- cbind(1, (x1 - mu_x1)/sd_x1, Z)
             
