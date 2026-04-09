@@ -7,6 +7,11 @@ cat("k type: ", k_s, "\n\n", sep = "")
 
 # SAMPLE SIZE ----
 n = 1e3
+# Number fo covariates
+p = 1
+# Number of splines
+d = 20
+
 
 # SIMULATION SETTINGS ----
 error_distr = c("Gaussian", "Gamma")
@@ -19,8 +24,6 @@ colnames(sim_settings) = c("err_distr", "cov_distr", "transf_x", "SNR")
 results = vector("list", nrow(sim_settings))
 niter = 11e3
 nrep = 100
-# Number of splines
-d = 20
 
 # PARALLEL BACKEND ----
 library(doParallel); library(foreach); library(doRNG)
@@ -132,7 +135,6 @@ for (s in 1:nrow(sim_settings)){
                                 
       )
       
-      p = 1
       out_MCMC = MCMC_MH(niter = niter, X = X_scaled, y = y, 
                          k = k_multi, c = 1e-3, 
                          p = p, d = d,
@@ -144,6 +146,7 @@ for (s in 1:nrow(sim_settings)){
       draws_thin10 = draws[seq(10, niter-1000, by = 10), ]
       
       draws_tau = out_MCMC$tau[-(1:1000), ]
+      draws_tau_thin10 = draws_tau[seq(10, niter-1000, by = 10), ]
       
       summ = rbind(apply(draws_thin10, 2,
                          function(D){
@@ -179,7 +182,7 @@ for (s in 1:nrow(sim_settings)){
       
       rownames(diagn) = c(outer(c("acf_thin", "rhat_thin", "ess_thin"), c(10, 5, 1), paste0))
       
-      list(draws = draws, draws_tau = draws_tau,
+      list(draws = draws_thin10, draws_tau = draws_tau_thin10,
            summ = summ, diagn = diagn, 
            w = out_MCMC$w, k = k_multi,
            x1 = x1, X_scaled = X_scaled, y = y, Z = Z,
