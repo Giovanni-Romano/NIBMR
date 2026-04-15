@@ -1,5 +1,6 @@
 # REQUIRED LIBRARIES ----
-library(mvtnorm)
+require(mvnfast)
+require(mvtnorm)
 require(mgcv)
 
 # UTILS ----
@@ -110,7 +111,7 @@ iwls_beta_update <- function(beta_curr, X, y, k, c, w, tau, tau_idx,
   mu_c <- drop(beta_curr + drop(Sigma_c %*% cur$grad))
   
   # Proposal draw
-  beta_prop <- drop(rmvnorm(1, mean = mu_c, sigma = Sigma_c, checkSymmetry = F))
+  beta_prop <- drop(mvnfast::rmvn(1, mu = mu_c, sigma = Sigma_c, isChol = F))
   
   # Proposed state
   prop <- eval_logfullcond_beta(
