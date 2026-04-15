@@ -32,15 +32,27 @@ loss_pop = function(beta, y, X, k, c= 1e-3, g = 1){
 }
 
 ## Derivatives ----
-H_i = function(beta, y_i, x_i, k, c){
+H_i = function(beta, y_i, x_i, outerX_i, k, c){
   eps = drop((y_i - drop(crossprod(x_i, beta))))
   k_i = k[(eps>0)+1]
   u = k_i*eps
   
   F1 = exp(sqrt(c) - sqrt(u^2+c)) * ((u^2)/(u^2+c) - c/((u^2+c)^(3/2)))
-  F2 = outer(-k_i*x_i, -k_i*x_i)
+  # F2 = outer(-k_i*x_i, -k_i*x_i)
+  F2 = outerX_i*(k_i^2)
   
   return(F1 * F2)
+}
+
+H_pop = function(beta, y, X, outerX, k, c){
+  eps = drop(y - drop(X %*% beta))
+  k_vec = k[(eps>0)+1]
+  u = k_vec*eps
+  
+  F1 = k_vec^2 * exp(sqrt(c) - sqrt(u^2+c)) * ((u^2)/(u^2+c) - c/((u^2+c)^(3/2)))
+  out = colSums(outerX * F1, dims = 1)
+  
+  return(out)
 }
 
 score_i = function(beta, y_i, x_i, k, c){
@@ -54,6 +66,16 @@ score_i = function(beta, y_i, x_i, k, c){
   return(F1 * F2)
 }
 
+score_pop = function(beta, y, X, k, c){
+  eps = drop((y - X %*% beta))
+  k_vec = k[(eps>0)+1]
+  u = k_vec*eps
+  
+  F1 = k_vec * exp(sqrt(c) - sqrt(u^2+c)) * u/sqrt(u^2+c)
+  out = colSums(X * F1)
+  
+  return(out)
+}
 
 
 ## DR Decomposition ----
@@ -95,12 +117,14 @@ construct_DR_basis <- function(x, d = 10, rescale = TRUE) {
 
 ## IWLS utils ----
 ### IWLS single update ----
-iwls_beta_update <- function(beta_curr, X, y, k, c, w, tau, tau_idx,
+iwls_beta_update <- function(beta_curr, X, y, outerX,
+                             k, c, w, tau, tau_idx,
                              asymm = TRUE, hess_eps = 1e-8,
                              score_i, H_i) {
   # Current state
   cur <- eval_logfullcond_beta(
-    beta = beta_curr, X = X, y = y, k = k, c = c, w = w,
+    beta = beta_curr, X = X, y = y, outerX = outerX,
+    k = k, c = c, w = w,
     tau = tau, tau_idx = tau_idx, asymm = asymm,
     score_i = score_i, H_i = H_i
   )
@@ -115,7 +139,8 @@ iwls_beta_update <- function(beta_curr, X, y, k, c, w, tau, tau_idx,
   
   # Proposed state
   prop <- eval_logfullcond_beta(
-    beta = beta_prop, X = X, y = y, k = k, c = c, w = w,
+    beta = beta_prop, X = X, y = y, outerX = outerX,
+    k = k, c = c, w = w,
     tau = tau, tau_idx = tau_idx, asymm = asymm,
     score_i = score_i, H_i = H_i
   )
@@ -150,7 +175,8 @@ iwls_beta_update <- function(beta_curr, X, y, k, c, w, tau, tau_idx,
 }
 
 ### Log-full-conditional ----
-eval_logfullcond_beta <- function(beta, X, y, k, c, w, tau, tau_idx,
+eval_logfullcond_beta <- function(beta, X, y, outerX = outerX,
+                                  k, c, w, tau, tau_idx,
                                   asymm = TRUE,
                                   score_i, H_i) {
   beta <- drop(beta)
@@ -163,13 +189,8 @@ eval_logfullcond_beta <- function(beta, X, y, k, c, w, tau, tau_idx,
   r <- drop(y - X %*% beta)
   loglik <- -w * sum(loss_fun(r, k = k, c = c))
   
-  grad_ll <- rep(0, P)
-  H_ll <- matrix(0, nrow = P, ncol = P)
-  
-  for (i in seq_len(n)) {
-    grad_ll <- grad_ll + w * drop(score_i(beta, y[i], X[i, ], k, c))
-    H_ll <- H_ll + w * H_i(beta, y[i], X[i, ], k, c)
-  }
+  grad_ll = w * score_pop(beta, y, X, k, c) 
+  H_ll = w * H_pop(beta, y, X, outerX, k, c)
   
   # --- Gaussian prior ---
   # No prior on intercept beta[1]
@@ -426,6 +447,9 @@ MCMC_IWLS <- function(niter,
   
   acc <- 0L
   
+  # --- Precompute outer X ----
+  outerX <- aperm(simplify2array(lapply(1:nrow(X), function(i) tcrossprod(X[i, ]))), c(3, 1, 2))
+  
   # --- MCMC loop ---
   for (m in seq_len(niter)) {
     
@@ -436,7 +460,8 @@ MCMC_IWLS <- function(niter,
     # --- IWLS update for beta ---
     up <- iwls_beta_update(
       beta_curr = beta_curr,
-      X = X, y = y, k = c(1, 1), c = c, w = w,
+      X = X, y = y, outerX = outerX,
+      k = c(1, 1), c = c, w = w,
       tau = tau, tau_idx = tau_idx,
       asymm = asymm, hess_eps = hess_eps,
       score_i = score_i, H_i = H_i
