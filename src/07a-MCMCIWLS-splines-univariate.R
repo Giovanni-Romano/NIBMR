@@ -136,9 +136,11 @@ for (s in 1:nrow(sim_settings)){
       )
       
       out_MCMC = MCMC_IWLS(niter = niter, X = X_scaled, y = y, 
-                           k = k_multi, c = 1e-3, 
+                           k = k_multi, k_deriv = sqrt(k_multi),
+                           c = 1e-3, c_deriv = 1e-1, 
                            p = p, d = d,
-                           asymm = T, verbose = F,
+                           a_tau = 2.1, b_tau = qgamma(0.001, shape = 2.1, rate = 1) * 5^2,
+                           asymm = T, verbose = 0,
                            beta0 = out_optim_scaled[ , "SANN"])
       
       draws = out_MCMC$beta[-(1:1000), ]

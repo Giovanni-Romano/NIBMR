@@ -25,6 +25,13 @@ loss_asymm2 = function(eps, k, c, g = 1){
     (eps > 0) * (1 - exp(c^(1/h)-( (k2*eps)^h + c )^(1/h) ))
 }
 
+loss_asymm2_pop = function(beta, y, X, k, c, g = 1){
+  eps = y - X%*%beta
+  k_vec = k[(eps > 0) + 1]
+  h = 2*g
+  sum(1 - exp(c^(1/h)-( (k_vec*eps)^h + c )^(1/h) ))
+}
+
 
 loss_pop = function(beta, y, X, k, c= 1e-3, g = 1){
   n = length(y)
@@ -118,13 +125,17 @@ construct_DR_basis <- function(x, d = 10, rescale = TRUE) {
 ## IWLS utils ----
 ### IWLS single update ----
 iwls_beta_update <- function(beta_curr, X, y, outerX,
-                             k, c, w, tau, tau_idx,
+                             k_post, k_deriv, 
+                             c_post, c_deriv, 
+                             w, tau, tau_idx,
                              asymm = TRUE, hess_eps = 1e-8,
                              score_i, H_i) {
   # Current state
   cur <- eval_logfullcond_beta(
     beta = beta_curr, X = X, y = y, outerX = outerX,
-    k = k, c = c, w = w,
+    k_post = k_post, k_deriv = k_deriv, 
+    c_post = c_post, c_deriv = c_deriv,
+    w = w,
     tau = tau, tau_idx = tau_idx, asymm = asymm,
     score_i = score_i, H_i = H_i
   )
@@ -140,7 +151,9 @@ iwls_beta_update <- function(beta_curr, X, y, outerX,
   # Proposed state
   prop <- eval_logfullcond_beta(
     beta = beta_prop, X = X, y = y, outerX = outerX,
-    k = k, c = c, w = w,
+    k_post = k_post, k_deriv = k_deriv,
+    c_post = c_post, c_deriv = c_deriv,
+    w = w,
     tau = tau, tau_idx = tau_idx, asymm = asymm,
     score_i = score_i, H_i = H_i
   )
@@ -176,7 +189,9 @@ iwls_beta_update <- function(beta_curr, X, y, outerX,
 
 ### Log-full-conditional ----
 eval_logfullcond_beta <- function(beta, X, y, outerX = outerX,
-                                  k, c, w, tau, tau_idx,
+                                  k_post, k_deriv, 
+                                  c_post, c_deriv,
+                                  w, tau, tau_idx,
                                   asymm = TRUE,
                                   score_i, H_i) {
   beta <- drop(beta)
@@ -187,10 +202,10 @@ eval_logfullcond_beta <- function(beta, X, y, outerX = outerX,
   
   # --- log-likelihood ---
   r <- drop(y - X %*% beta)
-  loglik <- -w * sum(loss_fun(r, k = k, c = c))
+  loglik <- -w * sum(loss_fun(r, k = k_post, c = c_post))
   
-  grad_ll = w * score_pop(beta, y, X, k, c) 
-  H_ll = w * H_pop(beta, y, X, outerX, k, c)
+  grad_ll = w * score_pop(beta = beta, y = y, X = X, k = k_deriv, c = c_deriv) 
+  H_ll = w * H_pop(beta = beta, y = y, X = X, outerX = outerX, k = k_deriv, c = c_deriv)
   
   # --- Gaussian prior ---
   # No prior on intercept beta[1]
@@ -238,7 +253,7 @@ make_negdef <- function(H, eps = 1e-8) {
 MCMC_RWMH = function(niter, 
                      X, y, k, c, p, d, beta0,
                      a_tau = 1e-3, b_tau = 1e-3,
-                     asymm = T, debug = F, verbose = F){
+                     asymm = T, debug = F, verbose = 0){
   
   P = 1+p+sum(d) # total size of the design matrix
   
@@ -249,7 +264,7 @@ MCMC_RWMH = function(niter,
   loss = ifelse(asymm, loss_asymm2, loss_symm)
   
   
-  if (verbose) {cat("Start 50-fold CV \t")}
+  if (verbose  > 0) {cat("Start 50-fold CV \t")}
   w_num = 1/2
   
   set.seed(123)  # for reproducibility
@@ -368,7 +383,9 @@ MCMC_RWMH = function(niter,
 
 
 MCMC_IWLS <- function(niter,
-                      X, y, k, c, p, d, beta0,
+                      X, y, 
+                      k, k_deriv, c, c_deriv,
+                      p, d, beta0,
                       a_tau = 1e-3, b_tau = 1e-3,
                       asymm = TRUE, debug = FALSE, verbose = FALSE,
                       hess_eps = 1e-8,
@@ -387,12 +404,11 @@ MCMC_IWLS <- function(niter,
   
   
   # --- Estimate w ---
-  if (verbose) cat("Start 50-fold CV\t")
-  
   w_num <- 1/2
   set.seed(seed)
   
   K <- 10
+  if (verbose > 0) cat("Start ", K, "-fold CV\t", sep = "")
   fold_id <- sample(rep(1:K, length.out = n))
   
   CV10 <- sapply(1:K, function(f) {
@@ -413,7 +429,7 @@ MCMC_IWLS <- function(niter,
   mean_cv10 <- sum(CV10) / n
   w <- w_num / mean_cv10
   
-  if (verbose) cat("End CV.\n\n")
+  if (verbose > 0) cat("End CV.\n\n")
   
   
   # --- Storage ---
@@ -447,13 +463,13 @@ MCMC_IWLS <- function(niter,
   
   acc <- 0L
   
-  # --- Precompute outer X ----
+  # --- Precompute outer X ---
   outerX <- aperm(simplify2array(lapply(1:nrow(X), function(i) tcrossprod(X[i, ]))), c(3, 1, 2))
   
   # --- MCMC loop ---
   for (m in seq_len(niter)) {
     
-    if (verbose && m %% max(1, floor(niter / 10)) == 0) {
+    if (verbose == 1 && m %% max(1, floor(niter / 10)) == 0) {
       cat(round(100 * m / niter), "%\t")
     }
     
@@ -461,7 +477,9 @@ MCMC_IWLS <- function(niter,
     up <- iwls_beta_update(
       beta_curr = beta_curr,
       X = X, y = y, outerX = outerX,
-      k = c(1, 1), c = c, w = w,
+      k_post = k, k_deriv = k_deriv,
+      c_post = c, c_deriv = c_deriv, 
+      w = w,
       tau = tau, tau_idx = tau_idx,
       asymm = asymm, hess_eps = hess_eps,
       score_i = score_i, H_i = H_i
@@ -476,7 +494,7 @@ MCMC_IWLS <- function(niter,
     # --- Update tau ---
     for (j in seq_len(2 * p)) {
       beta_tmp <- beta_sample[m, 1 + which(tau_idx == j)]
-      
+
       var_sample = 1 / rgamma(1,
                               shape = a_tau + c(rep(1, p), d)[j] / 2,
                               rate  = b_tau + sum(beta_tmp^2) / 2
@@ -487,7 +505,7 @@ MCMC_IWLS <- function(niter,
     
     tau <- tau_sample[m, ]
     
-    if (debug && (m %% 100 == 0)) {
+    if (verbose == 2 && (m %% 1000 == 0)) {
       cat("iter =", m,
           "| acc rate =", round(acc / m, 3),
           "| alpha =", round(alfa_sample[m], 3),
