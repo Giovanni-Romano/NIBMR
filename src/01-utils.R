@@ -57,10 +57,10 @@ H_pop = function(beta, y, X, outerX, k, c){
   u = k_vec*eps
   
   F1 = k_vec^2 * exp(sqrt(c) - sqrt(u^2+c)) * ((u^2)/(u^2+c) - c/((u^2+c)^(3/2)))
-  # out = colSums(outerX * F1, dims = 1)
-  F2 = outerX * F1
-  d = dim(F2)
-  out = matrix(crossprod(matrix(F2, d[1]), rep(1, d[1])), d[2], d[3])
+  out = colSums(outerX * F1, dims = 1)
+  # F2 = outerX * F1
+  # d = dim(F2)
+  # out = matrix(crossprod(matrix(F2, d[1]), rep(1, d[1])), d[2], d[3])
   
   return(out)
 }
