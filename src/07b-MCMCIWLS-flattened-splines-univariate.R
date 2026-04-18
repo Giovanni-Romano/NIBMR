@@ -44,7 +44,7 @@ for (s in 1:nrow(sim_settings)){
   res_tmp = foreach(
     rep      = 1:nrep,
     .packages = c("quantreg", "HDInterval"),
-    .options.RNG = 76131) %dorng% {
+    .options.RNG = 76137) %dorng% {
       
       # DEFINE ERROR SAMPLER
       rerr = switch(ed_s,
