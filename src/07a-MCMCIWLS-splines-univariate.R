@@ -192,7 +192,7 @@ for (s in 1:nrow(sim_settings)){
              setting = s_s, n_retry = n_retry,
              sd_prop = out_MCMC$sd_prop, alfa = out_MCMC$alfa)
       }, error = function(e) {
-        message("Task ", i, " failed: ", e$message)
+        message("Task ", rep, " failed: ", e$message)
         return(list(draws = NULL, draws_tau = NULL,
                     summ = NULL, diagn = NULL, 
                     w =NULL, k = k_multi,
