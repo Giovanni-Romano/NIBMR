@@ -135,62 +135,71 @@ for (s in 1:nrow(sim_settings)){
                                 
       )
       
-      out_MCMC = MCMC_IWLS(niter = niter, X = X_scaled, y = y, 
-                           k = k_multi, k_deriv = sqrt(k_multi),
-                           c = 1e-3, c_deriv = 1e-1, 
-                           p = p, d = d,
-                           a_tau = 2.1, b_tau = qgamma(0.001, shape = 2.1, rate = 1) * 5^2,
-                           asymm = T, verbose = 0,
-                           beta0 = out_optim_scaled[ , "SANN"])
-      
-      draws = out_MCMC$beta[-(1:1000), ]
-      draws_thin5 = draws[seq(5, niter-1000, by = 5), ]
-      draws_thin10 = draws[seq(10, niter-1000, by = 10), ]
-      
-      draws_tau = out_MCMC$tau[-(1:1000), ]
-      draws_tau_thin10 = draws_tau[seq(10, niter-1000, by = 10), ]
-      
-      summ = rbind(apply(draws_thin10, 2,
-                         function(D){
-                           mean_b = mean(D)
-                           med_b = median(D)
-                           sd_b = sd(D)
-                           q025 = unname(quantile(D, probs = c(0.025)))
-                           q975 = unname(quantile(D, probs = c(0.975)))
-                           hdi_b = HDInterval::hdi(density(D), credMass = 0.95, allowSplit = T)
-                           if (nrow(hdi_b) == 1){
-                             HDI_L1 = unname(hdi_b[1, "begin"]); HDI_U1 = unname(hdi_b[1, "end"])
-                             HDI_L2 = HDI_U2 = NA
-                           } else {
-                             HDI_L1 = unname(hdi_b[1, "begin"]); HDI_U1 = unname(hdi_b[1, "end"])
-                             HDI_L2 = unname(hdi_b[2, "begin"]); HDI_U2 = unname(hdi_b[2, "end"])
+      tryCatch({
+        out_MCMC = MCMC_IWLS(niter = niter, X = X_scaled, y = y, 
+                             k = k_multi, k_deriv = sqrt(k_multi),
+                             c = 1e-3, c_deriv = 1e-1, 
+                             p = p, d = d,
+                             a_tau = 2.1, b_tau = qgamma(0.001, shape = 2.1, rate = 1) * 5^2,
+                             asymm = T, verbose = 0,
+                             beta0 = out_optim_scaled[ , "SANN"])
+        
+        draws = out_MCMC$beta[-(1:1000), ]
+        draws_thin5 = draws[seq(5, niter-1000, by = 5), ]
+        draws_thin10 = draws[seq(10, niter-1000, by = 10), ]
+        
+        draws_tau = out_MCMC$tau[-(1:1000), ]
+        draws_tau_thin10 = draws_tau[seq(10, niter-1000, by = 10), ]
+        
+        summ = rbind(apply(draws_thin10, 2,
+                           function(D){
+                             mean_b = mean(D)
+                             med_b = median(D)
+                             sd_b = sd(D)
+                             q025 = unname(quantile(D, probs = c(0.025)))
+                             q975 = unname(quantile(D, probs = c(0.975)))
+                             hdi_b = HDInterval::hdi(density(D), credMass = 0.95, allowSplit = T)
+                             if (nrow(hdi_b) == 1){
+                               HDI_L1 = unname(hdi_b[1, "begin"]); HDI_U1 = unname(hdi_b[1, "end"])
+                               HDI_L2 = HDI_U2 = NA
+                             } else {
+                               HDI_L1 = unname(hdi_b[1, "begin"]); HDI_U1 = unname(hdi_b[1, "end"])
+                               HDI_L2 = unname(hdi_b[2, "begin"]); HDI_U2 = unname(hdi_b[2, "end"])
+                             }
+                             
+                             c(mean = mean_b, median = med_b, sd = sd_b, 
+                               q025 = q025, q975 = q975,
+                               HDI_L1 = HDI_L1, HDI_U1 = HDI_U1, HDI_L2 = HDI_L2, HDI_U2 = HDI_U2)
                            }
-                           
-                           c(mean = mean_b, median = med_b, sd = sd_b, 
-                             q025 = q025, q975 = q975,
-                             HDI_L1 = HDI_L1, HDI_U1 = HDI_U1, HDI_L2 = HDI_L2, HDI_U2 = HDI_U2)
-                         }
-      ), t(out_optim_scaled))
-      
-      diagn = rbind(apply(draws_thin10, 2, function(x) acf(x, plot = F)[[1]][2]),
-                    apply(draws_thin10, 2, posterior::rhat),
-                    apply(draws_thin10, 2, posterior::ess_basic),
-                    apply(draws_thin5, 2, function(x) acf(x, plot = F)[[1]][2]),
-                    apply(draws_thin5, 2, posterior::rhat),
-                    apply(draws_thin5, 2, posterior::ess_basic),
-                    apply(draws, 2, function(x) acf(x, plot = F)[[1]][2]),
-                    apply(draws, 2, posterior::rhat),
-                    apply(draws, 2, posterior::ess_basic))
-      
-      rownames(diagn) = c(outer(c("acf_thin", "rhat_thin", "ess_thin"), c(10, 5, 1), paste0))
-      
-      list(draws = draws_thin10, draws_tau = draws_tau_thin10,
-           summ = summ, diagn = diagn, 
-           w = out_MCMC$w, k = k_multi,
-           x1 = x1, X_scaled = X_scaled, y = y, Z = Z,
-           setting = s_s, n_retry = n_retry,
-           sd_prop = out_MCMC$sd_prop, alfa = out_MCMC$alfa)
-      
+        ), t(out_optim_scaled))
+        
+        diagn = rbind(apply(draws_thin10, 2, function(x) acf(x, plot = F)[[1]][2]),
+                      apply(draws_thin10, 2, posterior::rhat),
+                      apply(draws_thin10, 2, posterior::ess_basic),
+                      apply(draws_thin5, 2, function(x) acf(x, plot = F)[[1]][2]),
+                      apply(draws_thin5, 2, posterior::rhat),
+                      apply(draws_thin5, 2, posterior::ess_basic),
+                      apply(draws, 2, function(x) acf(x, plot = F)[[1]][2]),
+                      apply(draws, 2, posterior::rhat),
+                      apply(draws, 2, posterior::ess_basic))
+        
+        rownames(diagn) = c(outer(c("acf_thin", "rhat_thin", "ess_thin"), c(10, 5, 1), paste0))
+        
+        list(draws = draws_thin10, draws_tau = draws_tau_thin10,
+             summ = summ, diagn = diagn, 
+             w = out_MCMC$w, k = k_multi,
+             x1 = x1, X_scaled = X_scaled, y = y, Z = Z,
+             setting = s_s, n_retry = n_retry,
+             sd_prop = out_MCMC$sd_prop, alfa = out_MCMC$alfa)
+      }, error = function(e) {
+        message("Task ", i, " failed: ", e$message)
+        return(list(draws = NULL, draws_tau = NULL,
+                    summ = NULL, diagn = NULL, 
+                    w =NULL, k = k_multi,
+                    x1 = x1, X_scaled = X_scaled, y = y, Z = Z,
+                    setting = s_s, n_retry = n_retry,
+                    sd_prop = NULL, alfa = NULL))  # or NULL
+      })
     }
   
   res = res_tmp
