@@ -137,8 +137,8 @@ for (s in 1:nrow(sim_settings)){
       
       tryCatch({
         out_MCMC = MCMC_IWLS(niter = niter, X = X_scaled, y = y, 
-                             k = sqrt(k_multi), k_deriv = (k_multi)^(1/4),
-                             c = 1e-2, c_deriv = 1e-1, 
+                             k = sqrt(k_multi), k_deriv = sqrt(k_multi),
+                             c = 1e-1, c_deriv = 1e-1, 
                              p = p, d = d,
                              a_tau = 2.1, b_tau = qgamma(0.001, shape = 2.1, rate = 1) * 5^2,
                              asymm = T, verbose = 0,
@@ -209,5 +209,5 @@ for (s in 1:nrow(sim_settings)){
 }
 
 SAVE_PATH = paste0("sim_study_nonC-GBI/splines_univ/sim_study_nonCalibrated_asymm_TL_",
-                   k_s, "_flattened.RDS")
+                   k_s, "_smallClargeK.RDS")
 saveRDS(results, SAVE_PATH)
