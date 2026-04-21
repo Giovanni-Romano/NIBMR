@@ -135,11 +135,11 @@ for (s in 1:nrow(sim_settings)){
                                 
       )
       
-      out_MCMC = MCMC_MH(niter = niter, X = X_scaled, y = y, 
-                         k = k_multi, c = 1e-3, 
-                         p = p, d = d,
-                         asymm = T, verbose = F,
-                         beta0 = out_optim_scaled[ , "SANN"])
+      out_MCMC = MCMC_RWMH(niter = niter, X = X_scaled, y = y, 
+                           k = k_multi, c = 1e-3, 
+                           p = p, d = d,
+                           asymm = T, verbose = F,
+                           beta0 = out_optim_scaled[ , "SANN"])
       
       draws = out_MCMC$beta[-(1:1000), ]
       draws_thin5 = draws[seq(5, niter-1000, by = 5), ]
