@@ -373,9 +373,10 @@ MCMC_RWMH = function(niter,
     # Sample tau
     for (j in 1:(2*p)){
       beta_tmp = beta_sample[m, 1+which(tau_idx == j)]
-      tau_sample[m, j] = 1/rgamma(1, 
-                                  shape = a_tau + c(rep(1, p), d)[j]/2,
-                                  rate = b_tau + sum(beta_tmp^2)/2)
+      var_sample = 1/rgamma(1, 
+                            shape = a_tau + c(rep(1, p), d)[j]/2,
+                            rate = b_tau + sum(beta_tmp^2)/2)
+      tau_sample[m, j] = sqrt(var_sample)
     }
   }
   
@@ -454,7 +455,7 @@ MCMC_IWLS <- function(niter,
   alfa_sample <- rep(NA_real_, niter)
   logpost_sample <- rep(NA_real_, niter)
   
-
+  
   # --- Initial values ---
   beta_curr <- drop(beta0)
   tau <- rep(100, 2 * p)
@@ -497,7 +498,7 @@ MCMC_IWLS <- function(niter,
     # --- Update tau ---
     for (j in seq_len(2 * p)) {
       beta_tmp <- beta_sample[m, 1 + which(tau_idx == j)]
-
+      
       var_sample = 1 / rgamma(1,
                               shape = a_tau + c(rep(1, p), d)[j] / 2,
                               rate  = b_tau + sum(beta_tmp^2) / 2
