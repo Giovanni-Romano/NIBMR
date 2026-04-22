@@ -4,20 +4,8 @@ require(mvtnorm)
 require(mgcv)
 
 # UTILS ----
-## Loss functions ----
-loss_symm = function(eps, k, c, g = 1, theta = 0){
-  h = 2*g
-  1 - exp( c^(1/h)-(((k*eps)^h + c)^(1/h)) )
-}
-
-loss_asymm = function(eps, k, c, g = 1, theta = 0){
-  h = 2*g
-  m1 = tan(pi/4 - theta)
-  1 - exp( c^(1/h)-(m1^sign(eps))*(((k*eps)^h + c)^(1/h)) )
-}
-
-
-loss_asymm2 = function(eps, k, c, g = 1){
+## Loss function ----
+loss_asymm = function(eps, k, c, g = 1){
   k1 = k[1]
   k2 = k[2]
   h = 2*g
@@ -25,7 +13,7 @@ loss_asymm2 = function(eps, k, c, g = 1){
     (eps > 0) * (1 - exp(c^(1/h)-( (k2*eps)^h + c )^(1/h) ))
 }
 
-loss_asymm2_pop = function(beta, y, X, k, c, g = 1){
+loss_asymm_pop = function(beta, y, X, k, c, g = 1){
   eps = y - X%*%beta
   k_vec = k[(eps > 0) + 1]
   h = 2*g
@@ -33,47 +21,16 @@ loss_asymm2_pop = function(beta, y, X, k, c, g = 1){
 }
 
 
-loss_pop = function(beta, y, X, k, c= 1e-3, g = 1){
-  n = length(y)
-  sum(sapply(1:n, function(i) loss(y[i]-X[i, ]%*%beta, k, c, g)))
-}
-
 ## Derivatives ----
-H_i = function(beta, y_i, x_i, outerX_i, k, c){
-  eps = drop((y_i - drop(crossprod(x_i, beta))))
-  k_i = k[(eps>0)+1]
-  u = k_i*eps
-  
-  F1 = exp(sqrt(c) - sqrt(u^2+c)) * ((u^2)/(u^2+c) - c/((u^2+c)^(3/2)))
-  # F2 = outer(-k_i*x_i, -k_i*x_i)
-  F2 = outerX_i*(k_i^2)
-  
-  return(F1 * F2)
-}
-
-H_pop = function(beta, y, X, outerX, k, c){
+H_pop = function(beta, y, X, X2, k, c){
   eps = drop(y - drop(X %*% beta))
   k_vec = k[(eps>0)+1]
   u = k_vec*eps
   
   F1 = k_vec^2 * exp(sqrt(c) - sqrt(u^2+c)) * ((u^2)/(u^2+c) - c/((u^2+c)^(3/2)))
-  out = colSums(outerX * F1, dims = 1)
-  # F2 = outerX * F1
-  # d = dim(F2)
-  # out = matrix(crossprod(matrix(F2, d[1]), rep(1, d[1])), d[2], d[3])
+  out = colSums(X2 * F1, dims = 1)
   
   return(out)
-}
-
-score_i = function(beta, y_i, x_i, k, c){
-  eps = drop((y_i - crossprod(x_i, beta)))
-  k_i = k[(eps>0)+1]
-  u = k_i*eps
-  
-  F1 = -exp(sqrt(c) - sqrt(u^2+c)) * u/sqrt(u^2+c)
-  F2 = -k_i*x_i
-  
-  return(F1 * F2)
 }
 
 score_pop = function(beta, y, X, k, c){
@@ -82,7 +39,7 @@ score_pop = function(beta, y, X, k, c){
   u = k_vec*eps
   
   F1 = k_vec * exp(sqrt(c) - sqrt(u^2+c)) * u/sqrt(u^2+c)
-  out = drop(crossprod(X*F1, rep(1, length(y)))) # Faster than colSums
+  out = colSums(X*F1)
   
   return(out)
 }
@@ -127,48 +84,43 @@ construct_DR_basis <- function(x, d = 10, rescale = TRUE) {
 
 ## IWLS utils ----
 ### IWLS single update ----
-iwls_beta_update <- function(beta_curr, X, y, outerX,
+iwls_beta_update <- function(beta_curr, X, y, X2,
                              k_post, k_deriv, 
                              c_post, c_deriv, 
                              w, tau, tau_idx,
-                             asymm = TRUE, hess_eps = 1e-8,
-                             score_i, H_i) {
+                             hess_eps = 1e-3) {
   # Current state
   cur <- eval_logfullcond_beta(
-    beta = beta_curr, X = X, y = y, outerX = outerX,
+    beta = beta_curr, X = X, y = y, X2 = X2,
     k_post = k_post, k_deriv = k_deriv, 
     c_post = c_post, c_deriv = c_deriv,
     w = w,
-    tau = tau, tau_idx = tau_idx, asymm = asymm,
-    score_i = score_i, H_i = H_i
+    tau = tau, tau_idx = tau_idx
   )
   
   Hc <- make_negdef(cur$H, eps = hess_eps)
-  Sigma_c.tmp <- -solve(Hc)
-  Sigma_c = (Sigma_c.tmp + t(Sigma_c.tmp))/2
-  mu_c <- drop(beta_curr + drop(Sigma_c %*% cur$grad))
+  Sigma_c <- -1/Hc
+  mu_c <- drop(beta_curr + Sigma_c*cur$grad)
   
   # Proposal draw
-  beta_prop <- drop(mvnfast::rmvn(1, mu = mu_c, sigma = Sigma_c, isChol = F))
+  beta_prop <- rnorm(length(beta_curr), mean = mu_c, sd = sqrt(Sigma_c))
   
   # Proposed state
   prop <- eval_logfullcond_beta(
-    beta = beta_prop, X = X, y = y, outerX = outerX,
+    beta = beta_prop, X = X, y = y, X2 = X2,
     k_post = k_post, k_deriv = k_deriv,
     c_post = c_post, c_deriv = c_deriv,
     w = w,
-    tau = tau, tau_idx = tau_idx, asymm = asymm,
-    score_i = score_i, H_i = H_i
+    tau = tau, tau_idx = tau_idx
   )
   
   Hp <- make_negdef(prop$H, eps = hess_eps)
-  Sigma_p.tmp <- -solve(Hp)
-  Sigma_p = (Sigma_p.tmp + t(Sigma_p.tmp))/2
-  mu_p <- drop(beta_prop - solve(Hp, prop$grad))
+  Sigma_p <- -1/Hp
+  mu_p <- drop(beta_prop + Sigma_p*prop$grad)
   
   # MH acceptance probability
-  log_q_prop_given_cur <- dmvnorm(beta_prop, mu_c, Sigma_c, log=TRUE,checkSymmetry=FALSE) 
-  log_q_cur_given_prop <- dmvnorm(beta_curr, mu_p, Sigma_p, log=TRUE,checkSymmetry=FALSE)
+  log_q_prop_given_cur <- sum(dnorm(beta_prop, mean = mu_c, sd = sqrt(Sigma_c), log = T))
+  log_q_cur_given_prop <- sum(dnorm(beta_curr, mean = mu_p, sd = sqrt(Sigma_p), log = T))
   
   log_alpha <- prop$logpost - cur$logpost +
     log_q_cur_given_prop - log_q_prop_given_cur
@@ -191,35 +143,32 @@ iwls_beta_update <- function(beta_curr, X, y, outerX,
 }
 
 ### Log-full-conditional ----
-eval_logfullcond_beta <- function(beta, X, y, outerX = outerX,
+eval_logfullcond_beta <- function(beta, X, y, X2 = X2,
                                   k_post, k_deriv, 
                                   c_post, c_deriv,
-                                  w, tau, tau_idx,
-                                  asymm = TRUE,
-                                  score_i, H_i) {
+                                  w, tau, tau_idx) {
   beta <- drop(beta)
   n <- nrow(X)
   P <- length(beta)
   
-  loss_fun <- if (asymm) loss_asymm2 else loss_symm
+  loss_fun <- loss_asymm2
   
   # --- log-likelihood ---
   r <- drop(y - X %*% beta)
   loglik <- -w * sum(loss_fun(r, k = k_post, c = c_post))
   
   grad_ll = w * score_pop(beta = beta, y = y, X = X, k = k_deriv, c = c_deriv) 
-  H_ll = w * H_pop(beta = beta, y = y, X = X, outerX = outerX, k = k_deriv, c = c_deriv)
+  H_ll = w * H_pop(beta = beta, y = y, X = X, X2 = X2, k = k_deriv, c = c_deriv)
   
   # --- Gaussian prior ---
   # No prior on intercept beta[1]
   # Prior on beta[-1] with group-specific variances tau[tau_idx]^2
   tau_tmp <- tau[tau_idx]  # length P-1
   
-  Omega_diag <- c(0, 1 / (tau_tmp^2))
-  Omega <- diag(Omega_diag, nrow = P)
+  Omega <- c(0, 1 / (tau_tmp^2))
   
   logprior <- -0.5 * sum(beta[-1]^2 / (tau_tmp^2))
-  grad_prior <- - drop(Omega %*% beta)
+  grad_prior <- - (Omega * beta)
   H_prior <- - Omega
   
   # --- full conditional ---
@@ -235,21 +184,9 @@ eval_logfullcond_beta <- function(beta, X, y, outerX = outerX,
 }
 
 ### Enforce symmetry and negative definiteness in Hessian ----
-make_negdef <- function(H, eps = 1e-8) {
-  H <- (H + t(H)) / 2
-  ee <- eigen(H, symmetric = TRUE)
-  
-  # Force all eigenvalues to be <= -eps
-  ee$values <- pmin(ee$values, -eps)
-  H_new <- ee$vectors %*% diag(ee$values, nrow = nrow(H)) %*% t(ee$vectors)
-  
-  # # Modification in formula 3.44 of Nocedal&Wright2006
-  # ee_val = ee$values
-  # e_new = ee_val
-  # e_new[ee_val >-eps] = -(eps + ee_val)[ee_val > -eps]
-  # Lambda_new = diag(e_new)
-  # H_new <- ee$vectors %*% Lambda_new %*% t(ee$vectors)
-  # (H_new + t(H_new)) / 2
+make_negdef <- function(H, eps = 1e-3) {
+  H[H>=0] = -eps
+  return(H)
 }
 
 # MCMC SAMPLERS ----
@@ -390,10 +327,10 @@ MCMC_IWLS <- function(niter,
                       X, y, 
                       k, k_deriv, c, c_deriv,
                       p, d, beta0,
-                      a_tau = 1e-3, b_tau = 1e-3,
-                      asymm = TRUE, debug = FALSE, verbose = FALSE,
-                      hess_eps = 1e-8,
-                      seed = 123) {
+                      a_tau, b_tau,
+                      debug = FALSE, verbose = FALSE,
+                      hess_eps = 1e-3,
+                      seed = NULL) {
   
   # Total number of regression coefficients:
   # intercept + p linear + sum(d) nonlinear basis coeffs
@@ -404,12 +341,12 @@ MCMC_IWLS <- function(niter,
   }
   
   n <- nrow(X)
-  loss_fun <- if (asymm) loss_asymm2 else loss_symm
+  loss_fun <- loss_asymm2
   
   
   # --- Estimate w ---
   w_num <- 1/2
-  set.seed(seed)
+  if (!is.null(seed)) {set.seed(seed)}
   
   K <- 10
   if (verbose > 0) cat("Start ", K, "-fold CV\t", sep = "")
@@ -468,7 +405,7 @@ MCMC_IWLS <- function(niter,
   acc <- 0L
   
   # --- Precompute outer X ---
-  outerX <- aperm(simplify2array(lapply(1:nrow(X), function(i) tcrossprod(X[i, ]))), c(3, 1, 2))
+  X2 <- X^2
   
   # --- MCMC loop ---
   for (m in seq_len(niter)) {
@@ -480,13 +417,12 @@ MCMC_IWLS <- function(niter,
     # --- IWLS update for beta ---
     up <- iwls_beta_update(
       beta_curr = beta_curr,
-      X = X, y = y, outerX = outerX,
+      X = X, y = y, X2 = X2,
       k_post = k, k_deriv = k_deriv,
       c_post = c, c_deriv = c_deriv, 
       w = w,
       tau = tau, tau_idx = tau_idx,
-      asymm = asymm, hess_eps = hess_eps,
-      score_i = score_i, H_i = H_i
+      hess_eps = hess_eps
     )
     
     beta_curr <- up$beta
@@ -500,8 +436,8 @@ MCMC_IWLS <- function(niter,
       beta_tmp <- beta_sample[m, 1 + which(tau_idx == j)]
       
       var_sample = 1 / rgamma(1,
-                              shape = a_tau + c(rep(1, p), d)[j] / 2,
-                              rate  = b_tau + sum(beta_tmp^2) / 2
+                              shape = a_tau[j] + c(rep(1, p), d)[j] / 2,
+                              rate  = b_tau[j] + sum(beta_tmp^2) / 2
       )
       
       tau_sample[m, j] <- sqrt(var_sample)
