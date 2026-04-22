@@ -211,4 +211,8 @@ for (s in 1:nrow(sim_settings)){
 
 SAVE_PATH = paste0("sim_study_nonC-GBI/splines_univ/sim_study_nonCalibrated_asymm_TL_",
                    k_s, "_diagH.RDS")
-saveRDS(results, SAVE_PATH)
+saveRDS(list(res = results,
+             k_and_c = list("k" = "kmulti", "k_deriv" = "kmulti", 
+                            "c" = "1e-3", "c_deriv" = "1e-1",
+                            "hyperpar tau" = c("lin" = "informative (Nico)",
+                                               "nonline" = "non=informative"))), SAVE_PATH)
