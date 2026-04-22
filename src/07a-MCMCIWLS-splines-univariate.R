@@ -127,7 +127,7 @@ for (s in 1:nrow(sim_settings)){
       out_optim_scaled = sapply(c("Nelder-Mead", "BFGS", "CG", "L-BFGS-B", "SANN"),
                                 function(m){
                                   est = optim(par = rep(0, ncol(X_scaled)),
-                                              fn = function(b) sum(loss_asymm2(y - X_scaled%*%b, 
+                                              fn = function(b) sum(loss_asymm(y - X_scaled%*%b, 
                                                                                k_multi, 
                                                                                1e-3)),
                                               method = m)$par
