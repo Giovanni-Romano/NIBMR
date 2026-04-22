@@ -22,7 +22,8 @@ sim_settings = as.matrix(expand.grid(error_distr, cov_distr, transform_x, SNR))
 colnames(sim_settings) = c("err_distr", "cov_distr", "transf_x", "SNR")
 
 results = vector("list", nrow(sim_settings))
-niter = 11e3
+niter = 15e3
+burnin = 5e3
 nrep = 100
 
 # PARALLEL BACKEND ----
@@ -137,19 +138,19 @@ for (s in 1:nrow(sim_settings)){
       
       tryCatch({
         out_MCMC = MCMC_IWLS(niter = niter, X = X_scaled, y = y, 
-                             k = k_multi, k_deriv = sqrt(k_multi),
+                             k = k_multi, k_deriv = k_multi,
                              c = 1e-3, c_deriv = 1e-1, 
                              p = p, d = d,
-                             a_tau = 2.1, b_tau = qgamma(0.001, shape = 2.1, rate = 1) * 5^2,
-                             asymm = T, verbose = 0,
+                             a_tau = c(2.1, 1e-3), b_tau = c(qgamma(0.001, shape = 2.1, rate = 1) * 5^2, 1e-3),
+                             verbose = 0,
                              beta0 = out_optim_scaled[ , "SANN"])
         
-        draws = out_MCMC$beta[-(1:1000), ]
-        draws_thin5 = draws[seq(5, niter-1000, by = 5), ]
-        draws_thin10 = draws[seq(10, niter-1000, by = 10), ]
+        draws = out_MCMC$beta[-(1:burnin), ]
+        draws_thin5 = draws[seq(5, niter-burnin, by = 5), ]
+        draws_thin10 = draws[seq(10, niter-burnin, by = 10), ]
         
-        draws_tau = out_MCMC$tau[-(1:1000), ]
-        draws_tau_thin10 = draws_tau[seq(10, niter-1000, by = 10), ]
+        draws_tau = out_MCMC$tau[-(1:burnin), ]
+        draws_tau_thin10 = draws_tau[seq(10, niter-burnin, by = 10), ]
         
         summ = rbind(apply(draws_thin10, 2,
                            function(D){
@@ -209,5 +210,5 @@ for (s in 1:nrow(sim_settings)){
 }
 
 SAVE_PATH = paste0("sim_study_nonC-GBI/splines_univ/sim_study_nonCalibrated_asymm_TL_",
-                   k_s, ".RDS")
+                   k_s, "_diagH.RDS")
 saveRDS(results, SAVE_PATH)
