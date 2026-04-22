@@ -151,7 +151,7 @@ eval_logfullcond_beta <- function(beta, X, y, X2 = X2,
   n <- nrow(X)
   P <- length(beta)
   
-  loss_fun <- loss_asymm2
+  loss_fun <- loss_asymm
   
   # --- log-likelihood ---
   r <- drop(y - X %*% beta)
@@ -189,140 +189,7 @@ make_negdef <- function(H, eps = 1e-3) {
   return(H)
 }
 
-# MCMC SAMPLERS ----
-MCMC_RWMH = function(niter, 
-                     X, y, k, c, p, d, beta0,
-                     a_tau = 1e-3, b_tau = 1e-3,
-                     asymm = T, debug = F, verbose = 0){
-  
-  P = 1+p+sum(d) # total size of the design matrix
-  
-  if (P != length(beta0)){stop("Length of beta0 is not equal to p")}
-  
-  n = nrow(X)
-  
-  loss = ifelse(asymm, loss_asymm2, loss_symm)
-  
-  
-  if (verbose  > 0) {cat("Start 50-fold CV \t")}
-  w_num = 1/2
-  
-  set.seed(123)  # for reproducibility
-  
-  K <- 50
-  fold_id <- sample(rep(1:K, length.out = n))
-  CV10 <- sapply(1:K, function(f) {
-    test_idx  <- which(fold_id == f)
-    train_idx <- setdiff(1:n, test_idx)
-    
-    est <- optim(
-      par = beta0,
-      fn = function(b) sum(loss(y[train_idx] - X[train_idx, ] %*% b, k, 1e-3)),
-      method = "BFGS"
-    )$par
-    
-    sum(loss(y[test_idx] - X[test_idx, ] %*% est, k, 1e-3))
-  })
-  mean_cv10 <- sum(CV10) / n
-  w = w_num / mean_cv10
-  if (verbose) {cat("End CV. \n\n")}
-  
-  # LOO <- sapply(1:n, function(i) {
-  #   est <- optim(par = beta0,
-  #                fn = function(b) sum(loss(y[-i] - X[-i, ] %*% b, k, 1e-3)),
-  #                method = "BFGS")$par
-  #   loss(y[i] - drop(X[i, ] %*% est), k, 1e-3)
-  # })
-  # w = w_num / (sum(LOO)/n)
-  
-  
-  beta_sample = matrix(NA, nrow = niter, ncol = P)
-  colnames(beta_sample) = c("beta0", 
-                            paste0("beta_lin", 1:p), 
-                            unlist(lapply(seq_len(p), function(i) {paste0("beta_nonlin", i, ".", seq_len(d[i]))}))
-  )
-  beta_init = beta0
-  last = beta_init
-  
-  tau_sample = matrix(NA, nrow = niter, ncol = 2*p)
-  tau = rep(1, 2*p)
-  tau_idx = c(1:p, p+rep(1:p, d))
-  
-  acc = 0
-  alfa_sample = rep(NA, niter)
-  sd_prop_sample = c()
-  
-  Sigma0 = diag(1, nrow = P)
-  cholSigma0 = chol(Sigma0)
-  
-  for (m in 1:niter){
-    
-    if (verbose & m %% (niter/10) == 0){
-      cat(10 * m / (niter/10), "% \t")
-    }
-    
-    if (m == 1){
-      RM = log(2.38/sqrt(P))
-    } else {
-      RM = log(sd_prop) + (1/m)^(3/4)*(acc/(m-1) - 0.234)
-    }
-    
-    sd_prop = exp(RM); sd_prop_sample = c(sd_prop_sample, sd_prop)
-    prop = t(mvnfast::rmvn(n = 1, mu = last, sigma = sd_prop*cholSigma0, isChol = T))
-    
-    r_last = y - X%*%last
-    r_prop = y - X%*%prop
-    
-    loss_last = loss(r_last, k = k, c = c)
-    loss_prop = loss(r_prop, k = k, c = c)
-    
-    if (debug){
-      plot(density(r_last)); lines(density(r_prop), col = 2)
-      cat("\n\n Mean losses", colMeans(loss_sample[m, , ]), "\n\n")
-    }
-    
-    loglik_last = -w*sum(loss_last)
-    loglik_prop = -w*sum(loss_prop)
-    
-    if (debug){
-      cat("loglik last:", loglik_last, "\t | \t loglik prop:", loglik_prop, "\n")
-    }
-    
-    tau_tmp = tau[tau_idx]
-    
-    target_last = loglik_last - 0.5*sum(last[-1]^2/(tau_tmp^2))
-    target_prop = loglik_prop - 0.5*sum(prop[-1]^2/(tau_tmp^2))
-    
-    alfa = alfa_sample[m] = exp(min(target_prop - target_last, 0))
-    u = runif(1, 0, 1)
-    
-    if (u < alfa){
-      beta_sample[m, ] = prop
-      last = prop
-      is_acc = 1
-    } else {
-      beta_sample[m, ] = last
-      is_acc = 0
-    }
-    acc = acc + is_acc
-    
-    
-    # Sample tau
-    for (j in 1:(2*p)){
-      beta_tmp = beta_sample[m, 1+which(tau_idx == j)]
-      var_sample = 1/rgamma(1, 
-                            shape = a_tau + c(rep(1, p), d)[j]/2,
-                            rate = b_tau + sum(beta_tmp^2)/2)
-      tau_sample[m, j] = sqrt(var_sample)
-    }
-  }
-  
-  return(list(beta = beta_sample, tau = tau_sample,
-              acc_prop = acc/niter, alfa = alfa_sample, sd_prop = sd_prop_sample,
-              w = w))
-}
-
-
+# MCMC SAMPLER ----
 MCMC_IWLS <- function(niter,
                       X, y, 
                       k, k_deriv, c, c_deriv,
@@ -341,7 +208,7 @@ MCMC_IWLS <- function(niter,
   }
   
   n <- nrow(X)
-  loss_fun <- loss_asymm2
+  loss_fun <- loss_asymm
   
   
   # --- Estimate w ---
