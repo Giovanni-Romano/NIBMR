@@ -129,21 +129,20 @@ for (s in 1:nrow(sim_settings)){
                                   est = optim(par = rep(0, ncol(X_scaled)),
                                               fn = function(b) sum(loss_asymm(y - X_scaled%*%b, 
                                                                                k_multi, 
-                                                                               1e-3)),
+                                                                               1e-1)) + 0.5*sum(abs(b)),
                                               method = m)$par
                                   est
                                 }
-                                
       )
       
       tryCatch({
         out_MCMC = MCMC_IWLS(niter = niter, X = X_scaled, y = y, 
-                             k = k_multi, k_deriv = k_multi,
-                             c = 1e-3, c_deriv = 1e-1, 
+                             k = (k_multi)^(1/2), k_deriv = (k_multi)^(1/2),
+                             c = 1e-1, c_deriv = 1e-1, 
                              p = p, d = d,
                              a_tau = c(2.1, 1e-3), b_tau = c(qgamma(0.001, shape = 2.1, rate = 1) * 5^2, 1e-3),
-                             verbose = 0,
-                             beta0 = out_optim_scaled[ , "SANN"])
+                             verbose = 2, seed = 2,
+                             beta0 = out_optim_scaled[ , "BFGS"])
         
         draws = out_MCMC$beta[-(1:burnin), ]
         draws_thin5 = draws[seq(5, niter-burnin, by = 5), ]
@@ -210,9 +209,9 @@ for (s in 1:nrow(sim_settings)){
 }
 
 SAVE_PATH = paste0("sim_study_nonC-GBI/splines_univ/sim_study_nonCalibrated_asymm_TL_",
-                   k_s, "_diagH.RDS")
+                   k_s, "_diagH_sqrtK_c1e-1.RDS")
 saveRDS(list(res = results,
-             k_and_c = list("k" = "kmulti", "k_deriv" = "kmulti", 
-                            "c" = "1e-3", "c_deriv" = "1e-1",
+             k_and_c = list("k" = "sqrt(kmulti)", "k_deriv" = "sqrt(kmulti)", 
+                            "c" = "1e-1", "c_deriv" = "1e-1",
                             "hyperpar tau" = c("lin" = "informative (Nico)",
                                                "nonline" = "non=informative"))), SAVE_PATH)
