@@ -262,7 +262,7 @@ MCMC_IWLS <- function(niter,
   
   # --- Initial values ---
   beta_curr <- drop(beta0)
-  tau <- rep(100, 2 * p)
+  tau <- rep(10, 2 * p)
   
   # Maps beta[-1] to the corresponding tau component:
   # first p coefficients are linear effects,
