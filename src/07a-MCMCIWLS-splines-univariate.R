@@ -148,7 +148,7 @@ for (s in 1:nrow(sim_settings)){
                              c = 1e-1, c_deriv = 1e-1, 
                              p = p, d = d,
                              a_tau = c(2.1, 1e-3), b_tau = c(qgamma(0.001, shape = 2.1, rate = 1) * 5^2, 1e-3),
-                             verbose = 2,
+                             verbose = 0,
                              beta0 = out_optim_scaled[ , "BFGS"])
         
         draws = out_MCMC$beta[-(1:burnin), ]
