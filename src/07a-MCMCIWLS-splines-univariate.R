@@ -2,24 +2,26 @@ rm(list = ls())
 source("src/01-utils.R")
 
 # READ TYPE OF K ----
-k_s = commandArgs(trailingOnly = TRUE)
-cat("k type: ", k_s, "\n\n", sep = "")
+cmdline = commandArgs(trailingOnly = TRUE)
 
 # SAMPLE SIZE ----
-n = 1e3
+n = as.integer(cmdline[1])
 # Number fo covariates
 p = 1
 # Number of splines
 d = 20
+# Type of k (fixed to "init")
+k_s = "init"
 
 
 # SIMULATION SETTINGS ----
 error_distr = c("Gaussian", "Gamma")
 cov_distr = c("Unif_rad2", "Beta_2_4") #"Gamma_1.5_1.5") #, "BVN")
 transform_x = c("parabola", "cubic", "trigonometric")
-SNR = c(2, 1)
+SNR = c(5, 2)
 sim_settings = as.matrix(expand.grid(error_distr, cov_distr, transform_x, SNR))
 colnames(sim_settings) = c("err_distr", "cov_distr", "transf_x", "SNR")
+ev_s = as.character(cmdline[2])  #c("hetero", "homo")
 
 results = vector("list", nrow(sim_settings))
 niter = 15e3
@@ -41,7 +43,6 @@ for (s in 1:nrow(sim_settings)){
   tr_s = unname(s_s[3])
   snr_s = as.numeric(unname(s_s[4]))
   
-  
   res_tmp = foreach(
     rep      = 1:nrep,
     .packages = c("quantreg", "HDInterval"),
@@ -49,8 +50,12 @@ for (s in 1:nrow(sim_settings)){
       
       # DEFINE ERROR SAMPLER
       rerr = switch(ed_s,
-                    Gaussian = function(ndraws, var_eta, SNR) rnorm(ndraws, 0, sd = sqrt(var_eta/SNR)),
-                    Gamma = function(ndraws, var_eta, SNR) rgamma(ndraws, 2, sqrt(2*SNR/var_eta)))
+                    Gaussian = function(ndraws, var_eta, SNR, hc) rnorm(ndraws, 0, sd = sqrt(var_eta/SNR)*sqrt(hc)),
+                    Gamma = function(ndraws, var_eta, SNR, hc) rgamma(ndraws, 2, sqrt(2*SNR/var_eta)/sqrt(hc)))
+      
+      verr = switch(ev_s,
+                    "homo" = function(x) 1,
+                    "hetero" = function(x) 0.25 + x^2)
       
       rcov = switch(cd_s,
                     "Unif_rad2" = function(ndraws) runif(ndraws, -sqrt(2), sqrt(2)),
@@ -77,13 +82,15 @@ for (s in 1:nrow(sim_settings)){
             eta = transf(x1)
             var_eta = var(eta)
             
+            hetero_correction = verr(x1)/mean(verr(x1))
+            
             # Mode shift
             mode_shift = switch(ed_s,
                                 Gaussian = 0,
-                                Gamma = (2 - 1) / sqrt(2*SNR/var_eta))
+                                Gamma =  (2 - 1) / sqrt(2*snr_s/var_eta) * sqrt(hetero_correction))
             
             # DRAW RESPONSE
-            y = eta + rerr(n, var_eta, SNR = snr_s) - mode_shift
+            y = eta + rerr(n, var_eta, SNR = snr_s, hc = hetero_correction) - mode_shift
             
             # CREATE DESIGN MATRIX
             DR <- construct_DR_basis(x1, d = d)
@@ -128,8 +135,8 @@ for (s in 1:nrow(sim_settings)){
                                 function(m){
                                   est = optim(par = rep(0, ncol(X_scaled)),
                                               fn = function(b) sum(loss_asymm(y - X_scaled%*%b, 
-                                                                               k_multi, 
-                                                                               1e-1)) + 0.5*sum(abs(b)),
+                                                                              (k_multi)^(1/2), 
+                                                                              1e-1)) + 0.5*sum(abs(b)),
                                               method = m)$par
                                   est
                                 }
@@ -141,7 +148,7 @@ for (s in 1:nrow(sim_settings)){
                              c = 1e-1, c_deriv = 1e-1, 
                              p = p, d = d,
                              a_tau = c(2.1, 1e-3), b_tau = c(qgamma(0.001, shape = 2.1, rate = 1) * 5^2, 1e-3),
-                             verbose = 2, seed = 2,
+                             verbose = 2,
                              beta0 = out_optim_scaled[ , "BFGS"])
         
         draws = out_MCMC$beta[-(1:burnin), ]
@@ -208,10 +215,9 @@ for (s in 1:nrow(sim_settings)){
   cat(round(100*s/nrow(sim_settings), 2), "%\n", sep = "")
 }
 
-SAVE_PATH = paste0("sim_study_nonC-GBI/splines_univ/sim_study_nonCalibrated_asymm_TL_",
-                   k_s, "_diagH_sqrtK_c1e-1.RDS")
+SAVE_PATH = paste0("sim_study_nonC-GBI/splines_univ/ss_p1_n", n, "_", ev_s, ".RDS")
 saveRDS(list(res = results,
              k_and_c = list("k" = "sqrt(kmulti)", "k_deriv" = "sqrt(kmulti)", 
                             "c" = "1e-1", "c_deriv" = "1e-1",
                             "hyperpar tau" = c("lin" = "informative (Nico)",
-                                               "nonline" = "non=informative"))), SAVE_PATH)
+                                               "nonlin" = "non=informative"))), SAVE_PATH)
