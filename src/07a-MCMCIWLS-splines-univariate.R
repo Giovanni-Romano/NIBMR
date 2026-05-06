@@ -194,10 +194,12 @@ for (s in 1:nrow(sim_settings)){
         
         list(draws = draws_thin10, draws_tau = draws_tau_thin10,
              summ = summ, diagn = diagn, 
-             w = out_MCMC$w, k = k_multi,
+             w = out_MCMC$w, 
+             k = (k_multi)^(1/2), k_deriv = (k_multi)^(1/2),
+             c = 1e-1, c_deriv = 1e-1, 
              x1 = x1, X_scaled = X_scaled, y = y, Z = Z,
              setting = s_s, n_retry = n_retry,
-             sd_prop = out_MCMC$sd_prop, alfa = out_MCMC$alfa)
+             sd_prop = out_MCMC$sd_prop, alfa = out_MCMC$alfa, acc_prop = out_MCMC$acc_prop)
       }, error = function(e) {
         message("Task ", rep, " failed: ", e$message)
         return(list(draws = NULL, draws_tau = NULL,
