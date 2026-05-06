@@ -18,7 +18,7 @@ k_s = "init"
 error_distr = c("Gaussian", "Gamma")
 cov_distr = c("Unif_rad2", "Beta_2_4") #"Gamma_1.5_1.5") #, "BVN")
 transform_x = c("parabola", "cubic", "trigonometric")
-SNR = c(5, 2)
+if (n == 1e3) {SNR = c(2, 1)} else {SNR = c(5, 2)}
 sim_settings = as.matrix(expand.grid(error_distr, cov_distr, transform_x, SNR))
 colnames(sim_settings) = c("err_distr", "cov_distr", "transf_x", "SNR")
 ev_s = as.character(cmdline[2])  #c("hetero", "homo")
