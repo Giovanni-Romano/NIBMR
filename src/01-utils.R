@@ -53,6 +53,7 @@ construct_DR_basis <- function(x, d = 10, rescale = TRUE) {
   n <- length(x)
   # set up P-spline design
   fit=smoothCon(s(x, bs="ps", k=d+2, m = c(2, 2)), data=data.frame(x),scale.penalty=FALSE)
+  sm = fit[[1]]
   
   B=fit[[1]]$X
   K=fit[[1]]$S[[1]]
@@ -79,8 +80,44 @@ construct_DR_basis <- function(x, d = 10, rescale = TRUE) {
     Trf <- Trf * scaling_factor
   }
   # you don't really need the full list but I returned everything and kept what I needed
-  list(Z = Z, Trafo = Trf, Gram = G_tilde, Penalty = K_tilde)
+  list(Z = Z, Trafo = Trf, 
+       smooth_object = sm,
+       Gram = G_tilde, Penalty = K_tilde)
 }
+
+
+reconstruct_DR_for_grid <- function(x, Z_saved, x_grid, d = 20, rescale = TRUE) {
+  
+  dr_rec <- construct_DR_basis(x, d = d, rescale = rescale)
+  
+  # Reconstruct B_grid using the training smooth object
+  B_grid <- mgcv::PredictMat(
+    dr_rec$smooth_object,
+    data.frame(x = x_grid)
+  )
+  
+  Z_rec_train <- dr_rec$Z
+  Z_rec_grid  <- B_grid %*% dr_rec$Trafo
+  
+  # Map reconstructed basis coordinates to the basis actually used in fitting
+  M <- qr.solve(Z_rec_train, Z_saved)
+  
+  Z_grid_aligned <- Z_rec_grid %*% M
+  
+  # Diagnostic: should be very small
+  err <- max(abs(Z_rec_train %*% M - Z_saved))
+  
+  x_center <- mean(x)#dr_rec$x_center
+  x_scale  <- sd(x)#dr_rec$x_scale
+  x_grid_scaled <- (x_grid - x_center) / x_scale
+  
+  list(
+    x_scaled = as.numeric(x_grid_scaled),
+    Z = Z_grid_aligned,
+    reconstruction_error = err
+  )
+}
+
 
 ## IWLS utils ----
 ### IWLS single update ----
