@@ -128,8 +128,8 @@ for (s in 1:nrow(sim_settings)){
       factorn = sqrt(varn+mun^2)
       
       k_multi = c( 
-        k/factorn,
-        k/factorp
+        sqrt(k)/factorn,
+        sqrt(k)/factorp
       )
       
       out_optim_scaled = sapply(c("Nelder-Mead", "BFGS", "CG", "L-BFGS-B", "SANN"),
@@ -145,7 +145,7 @@ for (s in 1:nrow(sim_settings)){
       
       tryCatch({
         out_MCMC = MCMC_IWLS(niter = niter, X = X_scaled, y = y, 
-                             k = (k_multi)^(1/2), k_deriv = (k_multi)^(1/2),
+                             k = k_multi, k_deriv = k_multi,
                              c = 1e-1, c_deriv = 1e-1, 
                              p = p, d = d,
                              a_tau = c(2.1, 1e-3), b_tau = c(qgamma(0.001, shape = 2.1, rate = 1) * 5^2, 1e-3),
@@ -196,7 +196,7 @@ for (s in 1:nrow(sim_settings)){
         list(draws = draws_thin10, draws_tau = draws_tau_thin10,
              summ = summ, diagn = diagn, 
              w = out_MCMC$w, 
-             k = (k_multi)^(1/2), k_deriv = (k_multi)^(1/2),
+             k = kmulti, k_deriv = k_multi,
              c = 1e-1, c_deriv = 1e-1, 
              x1 = x1, X_scaled = X_scaled, y = y, Z = Z,
              setting = s_s, n_retry = n_retry,
