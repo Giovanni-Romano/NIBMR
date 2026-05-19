@@ -202,7 +202,7 @@ for (s in 1:nrow(sim_settings)){
         list(draws = draws_thin10, draws_tau = draws_tau_thin10,
              summ = summ, diagn = diagn, 
              w = out_MCMC$w, 
-             k = kmulti, k_deriv = k_multi,
+             k = k_multi, k_deriv = k_multi,
              c = 1e-1, c_deriv = 1e-1, 
              x1 = x1, X_scaled = X_scaled, y = y, Z = Z,
              DR = DR[c("Trafo", "smooth_object", "Gram", "Penalty")],
