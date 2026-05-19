@@ -252,26 +252,26 @@ MCMC_IWLS <- function(niter,
   w_num <- 1/2
   if (!is.null(seed)) {set.seed(seed)}
   
-  K <- 10
+  K <- 50
   if (verbose > 0) cat("Start ", K, "-fold CV\t", sep = "")
   fold_id <- sample(rep(1:K, length.out = n))
   
-  CV10 <- sapply(1:K, function(f) {
+  CV <- sapply(1:K, function(f) {
     test_idx  <- which(fold_id == f)
     train_idx <- setdiff(seq_len(n), test_idx)
     
     est <- optim(
       par = beta0,
       fn = function(b) {
-        sum(loss_fun(y[train_idx] - X[train_idx, , drop = FALSE] %*% b, k, 1e-3))
+        sum(loss_fun(y[train_idx] - X[train_idx, , drop = FALSE] %*% b, k, c))
       },
       method = "BFGS"
     )$par
     
-    sum(loss_fun(y[test_idx] - X[test_idx, , drop = FALSE] %*% est, k, 1e-3))
+    sum(loss_fun(y[test_idx] - X[test_idx, , drop = FALSE] %*% est, k, c))
   })
   
-  mean_cv10 <- sum(CV10) / n
+  mean_cv <- sum(CV) / n
   w <- w_num / mean_cv10
   
   if (verbose > 0) cat("End CV.\n\n")
