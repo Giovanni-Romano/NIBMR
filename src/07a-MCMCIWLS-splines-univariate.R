@@ -137,11 +137,17 @@ for (s in 1:nrow(sim_settings)){
                                   est = optim(par = rep(0, ncol(X_scaled)),
                                               fn = function(b) sum(loss_asymm(y - X_scaled%*%b, 
                                                                               (k_multi)^(1/2), 
-                                                                              1e-1)) + 0.5*sum(abs(b)),
+                                                                              1e-1)),
                                               method = m)$par
                                   est
                                 }
       )
+      
+      loss_optim = apply(out_optim_scaled, 2, function(b){
+        loss_asymm_pop(b, y, X_scaled, k_multi, 1e-1)
+      })
+      opt = which.min(loss_optim)
+      b_init = out_optim_scaled[ , opt]
       
       tryCatch({
         out_MCMC = MCMC_IWLS(niter = niter, X = X_scaled, y = y, 
@@ -150,7 +156,7 @@ for (s in 1:nrow(sim_settings)){
                              p = p, d = d,
                              a_tau = c(2.1, 1e-3), b_tau = c(qgamma(0.001, shape = 2.1, rate = 1) * 5^2, 1e-3),
                              verbose = 0,
-                             beta0 = out_optim_scaled[ , "BFGS"])
+                             beta0 = b_init)
         
         draws = out_MCMC$beta[-(1:burnin), ]
         draws_thin5 = draws[seq(5, niter-burnin, by = 5), ]
