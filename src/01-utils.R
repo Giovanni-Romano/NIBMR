@@ -272,7 +272,7 @@ MCMC_IWLS <- function(niter,
   })
   
   mean_cv <- sum(CV) / n
-  w <- w_num / mean_cv10
+  w <- w_num / mean_cv
   
   if (verbose > 0) cat("End CV.\n\n")
   
