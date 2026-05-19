@@ -205,6 +205,7 @@ for (s in 1:nrow(sim_settings)){
              k = kmulti, k_deriv = k_multi,
              c = 1e-1, c_deriv = 1e-1, 
              x1 = x1, X_scaled = X_scaled, y = y, Z = Z,
+             DR = DR[c("Trafo", "smooth_object", "Gram", "Penalty")],
              setting = s_s, n_retry = n_retry,
              sd_prop = out_MCMC$sd_prop, alfa = out_MCMC$alfa, acc_prop = out_MCMC$acc_prop)
       }, error = function(e) {
