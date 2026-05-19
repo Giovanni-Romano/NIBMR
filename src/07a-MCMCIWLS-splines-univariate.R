@@ -227,7 +227,7 @@ for (s in 1:nrow(sim_settings)){
 
 SAVE_PATH = paste0("sim_study_nonC-GBI/splines_univ/ss_p1_n", n, "_", ev_s, ".RDS")
 saveRDS(list(res = results,
-             k_and_c = list("k" = "sqrt(kmulti)", "k_deriv" = "sqrt(kmulti)", 
+             k_and_c = list("k" = "sqrt(kinit)/factor", "k_deriv" = "sqrt(kinit)/factor", 
                             "c" = "1e-1", "c_deriv" = "1e-1",
                             "hyperpar tau" = c("lin" = "informative (Nico)",
                                                "nonlin" = "non=informative"))), SAVE_PATH)
