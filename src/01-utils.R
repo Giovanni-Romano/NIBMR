@@ -232,8 +232,9 @@ MCMC_IWLS <- function(niter,
                       k, k_deriv, c, c_deriv,
                       p, d, beta0,
                       a_tau, b_tau,
-                      debug = FALSE, verbose = FALSE,
+                      debug = FALSE, verbose = FALSE, print_step = 1000,
                       hess_eps = 1e-3,
+                      K_fold = 50,
                       seed = NULL) {
   
   # Total number of regression coefficients:
@@ -252,8 +253,8 @@ MCMC_IWLS <- function(niter,
   w_num <- 1/2
   if (!is.null(seed)) {set.seed(seed)}
   
-  K <- 50
-  if (verbose > 0) cat("Start ", K, "-fold CV\t", sep = "")
+  K <- K_fold
+  if (verbose > 0) cat("Start ", K, "-fold CV. \t", sep = "")
   fold_id <- sample(rep(1:K, length.out = n))
   
   CV <- sapply(1:K, function(f) {
@@ -307,6 +308,7 @@ MCMC_IWLS <- function(niter,
   tau_idx <- c(1:p, p + rep(seq_len(p), d))
   
   acc <- 0L
+  acc_tmp <- 0L
   
   # --- Precompute outer X ---
   X2 <- X^2
@@ -334,6 +336,7 @@ MCMC_IWLS <- function(niter,
     alfa_sample[m] <- exp(min(up$log_alpha, 0))
     logpost_sample[m] <- up$logpost
     acc <- acc + up$accepted
+    acc_tmp <- acc_tmp + up$accepted
     
     # --- Update tau ---
     for (j in seq_len(2 * p)) {
@@ -349,11 +352,18 @@ MCMC_IWLS <- function(niter,
     
     tau <- tau_sample[m, ]
     
-    if (verbose == 2 && (m %% 1000 == 0)) {
+    if (verbose == 2 && (m %% print_step == 0)) {
+      # cat("iter =", m,
+      #     "| acc rate =", round(acc / m, 3),
+      #     "| alpha =", round(alfa_sample[m], 3),
+      #     "| logpost =", round(logpost_sample[m], 3), "\n")
       cat("iter =", m,
+          "| acc rate (last 1k) =", round(acc_tmp / print_step, 3),
+          "| alpha mean (last 1k) =", round(mean(alfa_sample[(m-print_step+1):m]), 3),
           "| acc rate =", round(acc / m, 3),
-          "| alpha =", round(alfa_sample[m], 3),
+          "| alpha mean =", round(mean(alfa_sample, na.rm = T), 3),
           "| logpost =", round(logpost_sample[m], 3), "\n")
+      acc_tmp <- 0L
     }
   }
   
