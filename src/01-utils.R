@@ -303,8 +303,8 @@ MCMC_IWLS <- function(niter,
     paste0("tau_nonlin", seq_len(p))
   )
   
-  alfa_sample <- matrix(NA_real_, nrow = niter, ncol = 1+p)
-  logpost_sample <- matrix(NA_real_, nrow = niter, ncol = 1+p)
+  # alfa_sample <- matrix(NA_real_, nrow = niter, ncol = 1+p)
+  # logpost_sample <- matrix(NA_real_, nrow = niter, ncol = 1+p)
   
   
   # --- Initial values ---
@@ -343,8 +343,8 @@ MCMC_IWLS <- function(niter,
       hess_eps = hess_eps
     )
     beta_curr <- up$beta
-    alfa_sample[m, 1] <- exp(min(up$log_alpha, 0))
-    logpost_sample[m, 1] <- up$logpost
+    # alfa_sample[m, 1] <- exp(min(up$log_alpha, 0))
+    # logpost_sample[m, 1] <- up$logpost
     acc[1] <- acc[1] + up$accepted
     acc_tmp[1] <- acc_tmp[1] + up$accepted
     
@@ -364,7 +364,7 @@ MCMC_IWLS <- function(niter,
         hess_eps = hess_eps
       )
       beta_curr <- up$beta
-      alfa_sample[m, j+1] <- exp(min(up$log_alpha, 0))
+      # alfa_sample[m, j+1] <- exp(min(up$log_alpha, 0))
       logpost_sample[m, j+1] <- up$logpost
       acc[j+1] <- acc[j+1] + up$accepted
       acc_tmp[j+1] <- acc_tmp[j+1] + up$accepted
@@ -408,7 +408,7 @@ MCMC_IWLS <- function(niter,
     beta = beta_sample,
     tau = tau_sample,
     acc_prop = acc / niter,
-    alfa = alfa_sample,
+    # alfa = alfa_sample,
     logpost = logpost_sample,
     w = w
   )

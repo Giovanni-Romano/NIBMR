@@ -148,14 +148,14 @@ for (s in 1:nrow(sim_settings)){
       out_optim_scaled = sapply(
         c("Nelder-Mead", "CG", "L-BFGS-B", "SANN"),
         # c("Nelder-Mead", "BFGS", "CG", "L-BFGS-B", "SANN"),
-                                function(m){
-                                  est = optim(par = rep(0, ncol(X_scaled)),
-                                              fn = function(b) sum(loss_asymm(y - X_scaled%*%b, 
-                                                                              k_multi, 
-                                                                              1e-1)),
-                                              method = m)$par
-                                  est
-                                }
+        function(m){
+          est = optim(par = rep(0, ncol(X_scaled)),
+                      fn = function(b) sum(loss_asymm(y - X_scaled%*%b, 
+                                                      k_multi, 
+                                                      1e-1)),
+                      method = m)$par
+          est
+        }
       )
       
       loss_optim = apply(out_optim_scaled, 2, function(b){
@@ -173,7 +173,7 @@ for (s in 1:nrow(sim_settings)){
                              p = p, d = d,
                              a_tau = c(a_tau1, a_tau1, a_tau2, a_tau2),
                              b_tau = c(b_tau1, b_tau1, b_tau2, b_tau2),
-                             verbose = 2, K_fold = 5, print_step = 2.5e3,
+                             verbose = 0, K_fold = 50, print_step = 2.5e3,
                              beta0 = b_init)
         
         draws = out_MCMC$beta[-(1:burnin), ]
@@ -182,28 +182,6 @@ for (s in 1:nrow(sim_settings)){
         
         draws_tau = out_MCMC$tau[-(1:burnin), ]
         draws_tau_thin10 = draws_tau[seq(10, niter-burnin, by = 10), ]
-        
-        summ = rbind(apply(draws_thin10, 2,
-                           function(D){
-                             mean_b = mean(D)
-                             med_b = median(D)
-                             sd_b = sd(D)
-                             q025 = unname(quantile(D, probs = c(0.025)))
-                             q975 = unname(quantile(D, probs = c(0.975)))
-                             hdi_b = HDInterval::hdi(density(D), credMass = 0.95, allowSplit = T)
-                             if (nrow(hdi_b) == 1){
-                               HDI_L1 = unname(hdi_b[1, "begin"]); HDI_U1 = unname(hdi_b[1, "end"])
-                               HDI_L2 = HDI_U2 = NA
-                             } else {
-                               HDI_L1 = unname(hdi_b[1, "begin"]); HDI_U1 = unname(hdi_b[1, "end"])
-                               HDI_L2 = unname(hdi_b[2, "begin"]); HDI_U2 = unname(hdi_b[2, "end"])
-                             }
-                             
-                             c(mean = mean_b, median = med_b, sd = sd_b, 
-                               q025 = q025, q975 = q975,
-                               HDI_L1 = HDI_L1, HDI_U1 = HDI_U1, HDI_L2 = HDI_L2, HDI_U2 = HDI_U2)
-                           }
-        ), t(out_optim_scaled))
         
         diagn = rbind(apply(draws_thin10, 2, function(x) acf(x, plot = F)[[1]][2]),
                       apply(draws_thin10, 2, posterior::rhat),
@@ -218,15 +196,15 @@ for (s in 1:nrow(sim_settings)){
         rownames(diagn) = c(outer(c("acf_thin", "rhat_thin", "ess_thin"), c(10, 5, 1), paste0))
         
         list(draws = draws_thin10, draws_tau = draws_tau_thin10,
-             summ = summ, diagn = diagn, 
+             diagn = diagn, 
              w = out_MCMC$w, 
              k = k_multi, k_deriv = k_multi,
              c = 1e-1, c_deriv = 1e-1, 
-             x1 = x1, X_scaled = X_scaled, y = y, Z1 = Z1, Z2 = Z2,
-             DR1 = DR1[c("Trafo", "smooth_object", "Gram", "Penalty")],
-             DR2 = DR2[c("Trafo", "smooth_object", "Gram", "Penalty")],
+             x1 = x1, X_scaled = X_scaled, y = y,
+             DR1 = DR1[c("Trafo", "smooth_object")],
+             DR2 = DR2[c("Trafo", "smooth_object")],
              setting = s_s, n_retry = n_retry,
-             sd_prop = out_MCMC$sd_prop, alfa = out_MCMC$alfa, acc_prop = out_MCMC$acc_prop)
+             acc_prop = out_MCMC$acc_prop)
       }, error = function(e) {
         message("Task ", rep, " failed: ", e$message)
         return(list(draws = NULL, draws_tau = NULL,
@@ -244,7 +222,7 @@ for (s in 1:nrow(sim_settings)){
   cat(round(100*s/nrow(sim_settings), 2), "%\n", sep = "")
 }
 
-SAVE_PATH = paste0("sim_study_nonC-GBI/splines_univ/ss_p2_n", n, "_", ev_s, ".RDS")
+SAVE_PATH = paste0("sim_study_nonC-GBI/splines_biv/ss_p2_n", n, "_", ev_s, ".RDS")
 saveRDS(list(res = results,
              k_and_c = list("k" = "sqrt(kinit)/factor", "k_deriv" = "sqrt(kinit)/factor", 
                             "c" = "1e-1", "c_deriv" = "1e-1",
