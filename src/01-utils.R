@@ -22,24 +22,24 @@ loss_asymm_pop = function(beta, y, X, k, c, g = 1){
 
 
 ## Derivatives ----
-H_pop = function(beta, y, X, X2, k, c){
+H_pop = function(idx, beta, y, X, X2, k, c){
   eps = drop(y - drop(X %*% beta))
   k_vec = k[(eps>0)+1]
   u = k_vec*eps
   
   F1 = k_vec^2 * exp(sqrt(c) - sqrt(u^2+c)) * ((u^2)/(u^2+c) - c/((u^2+c)^(3/2)))
-  out = colSums(X2 * F1, dims = 1)
+  out = colSums(X2[ , idx, drop = F] * F1, dims = 1)
   
   return(out)
 }
 
-score_pop = function(beta, y, X, k, c){
+score_pop = function(idx, beta, y, X, k, c){
   eps = drop((y - X %*% beta))
   k_vec = k[(eps>0)+1]
   u = k_vec*eps
   
   F1 = k_vec * exp(sqrt(c) - sqrt(u^2+c)) * u/sqrt(u^2+c)
-  out = colSums(X*F1)
+  out = colSums(X[ , idx, drop = F]*F1)
   
   return(out)
 }
@@ -121,14 +121,16 @@ reconstruct_DR_for_grid <- function(x, Z_saved, x_grid, d = 20, rescale = TRUE) 
 
 ## IWLS utils ----
 ### IWLS single update ----
-iwls_beta_update <- function(beta_curr, X, y, X2,
+iwls_beta_update <- function(idx, beta_curr, 
+                             X, y, X2,
                              k_post, k_deriv, 
                              c_post, c_deriv, 
                              w, tau, tau_idx,
                              hess_eps = 1e-3) {
   # Current state
   cur <- eval_logfullcond_beta(
-    beta = beta_curr, X = X, y = y, X2 = X2,
+    idx = idx, beta = beta_curr, 
+    X = X, y = y, X2 = X2,
     k_post = k_post, k_deriv = k_deriv, 
     c_post = c_post, c_deriv = c_deriv,
     w = w,
@@ -137,14 +139,16 @@ iwls_beta_update <- function(beta_curr, X, y, X2,
   
   Hc <- make_negdef(cur$H, eps = hess_eps)
   Sigma_c <- -1/Hc
-  mu_c <- drop(beta_curr + Sigma_c*cur$grad)
+  mu_c <- drop(beta_curr[idx] + Sigma_c*cur$grad)
   
   # Proposal draw
-  beta_prop <- rnorm(length(beta_curr), mean = mu_c, sd = sqrt(Sigma_c))
+  beta_prop <- beta_curr
+  beta_prop[idx] <- rnorm(length(idx), mean = mu_c, sd = sqrt(Sigma_c))
   
   # Proposed state
   prop <- eval_logfullcond_beta(
-    beta = beta_prop, X = X, y = y, X2 = X2,
+    idx = idx, beta = beta_prop, 
+    X = X, y = y, X2 = X2,
     k_post = k_post, k_deriv = k_deriv,
     c_post = c_post, c_deriv = c_deriv,
     w = w,
@@ -153,11 +157,11 @@ iwls_beta_update <- function(beta_curr, X, y, X2,
   
   Hp <- make_negdef(prop$H, eps = hess_eps)
   Sigma_p <- -1/Hp
-  mu_p <- drop(beta_prop + Sigma_p*prop$grad)
+  mu_p <- drop(beta_prop[idx] + Sigma_p*prop$grad)
   
   # MH acceptance probability
-  log_q_prop_given_cur <- sum(dnorm(beta_prop, mean = mu_c, sd = sqrt(Sigma_c), log = T))
-  log_q_cur_given_prop <- sum(dnorm(beta_curr, mean = mu_p, sd = sqrt(Sigma_p), log = T))
+  log_q_prop_given_cur <- sum(dnorm(beta_prop[idx], mean = mu_c, sd = sqrt(Sigma_c), log = T))
+  log_q_cur_given_prop <- sum(dnorm(beta_curr[idx], mean = mu_p, sd = sqrt(Sigma_p), log = T))
   
   log_alpha <- prop$logpost - cur$logpost +
     log_q_cur_given_prop - log_q_prop_given_cur
@@ -180,7 +184,8 @@ iwls_beta_update <- function(beta_curr, X, y, X2,
 }
 
 ### Log-full-conditional ----
-eval_logfullcond_beta <- function(beta, X, y, X2 = X2,
+eval_logfullcond_beta <- function(idx, beta, 
+                                  X, y, X2 = X2,
                                   k_post, k_deriv, 
                                   c_post, c_deriv,
                                   w, tau, tau_idx) {
@@ -194,19 +199,23 @@ eval_logfullcond_beta <- function(beta, X, y, X2 = X2,
   r <- drop(y - X %*% beta)
   loglik <- -w * sum(loss_fun(r, k = k_post, c = c_post))
   
-  grad_ll = w * score_pop(beta = beta, y = y, X = X, k = k_deriv, c = c_deriv) 
-  H_ll = w * H_pop(beta = beta, y = y, X = X, X2 = X2, k = k_deriv, c = c_deriv)
+  grad_ll = w * score_pop(idx = idx, beta = beta, y = y, X = X, k = k_deriv, c = c_deriv) 
+  H_ll = w * H_pop(idx = idx, beta = beta, y = y, X = X, X2 = X2, k = k_deriv, c = c_deriv)
   
   # --- Gaussian prior ---
   # No prior on intercept beta[1]
   # Prior on beta[-1] with group-specific variances tau[tau_idx]^2
-  tau_tmp <- tau[tau_idx]  # length P-1
-  
-  Omega <- c(0, 1 / (tau_tmp^2))
-  
-  logprior <- -0.5 * sum(beta[-1]^2 / (tau_tmp^2))
-  grad_prior <- - (Omega * beta)
-  H_prior <- - Omega
+  if (idx[1] == 1) {
+    logprior <- 0
+    grad_prior <- 0
+    H_prior <- 0
+  } else {
+    tau_tmp <- tau[tau_idx[idx-1]]
+    Omega <- 1 / (tau_tmp^2)
+    logprior <- -0.5 * sum(beta[-1]^2 / (tau_tmp^2))
+    grad_prior <- - (Omega * beta[idx])
+    H_prior <- - Omega
+  }
   
   # --- full conditional ---
   logpost <- loglik + logprior
@@ -294,8 +303,8 @@ MCMC_IWLS <- function(niter,
     paste0("tau_nonlin", seq_len(p))
   )
   
-  alfa_sample <- rep(NA_real_, niter)
-  logpost_sample <- rep(NA_real_, niter)
+  alfa_sample <- matrix(NA_real_, nrow = niter, ncol = 1+p)
+  logpost_sample <- matrix(NA_real_, nrow = niter, ncol = 1+p)
   
   
   # --- Initial values ---
@@ -307,8 +316,8 @@ MCMC_IWLS <- function(niter,
   # next sum(d) coefficients are nonlinear groups
   tau_idx <- c(1:p, p + rep(seq_len(p), d))
   
-  acc <- 0L
-  acc_tmp <- 0L
+  acc <- rep(0L, 1+p)
+  acc_tmp <- rep(0L, 1+p)
   
   # --- Precompute outer X ---
   X2 <- X^2
@@ -321,7 +330,10 @@ MCMC_IWLS <- function(niter,
     }
     
     # --- IWLS update for beta ---
+    
+    ## --- Update intercept ---
     up <- iwls_beta_update(
+      idx = 1,
       beta_curr = beta_curr,
       X = X, y = y, X2 = X2,
       k_post = k, k_deriv = k_deriv,
@@ -330,13 +342,37 @@ MCMC_IWLS <- function(niter,
       tau = tau, tau_idx = tau_idx,
       hess_eps = hess_eps
     )
-    
     beta_curr <- up$beta
+    alfa_sample[m, 1] <- exp(min(up$log_alpha, 0))
+    logpost_sample[m, 1] <- up$logpost
+    acc[1] <- acc[1] + up$accepted
+    acc_tmp[1] <- acc_tmp[1] + up$accepted
+    
+    ## --- Block update for each function/covariate ---
+    for (j in 1:p){
+      idx.b = 2+p+sum(d[1:j])-d[j]
+      idx.e = idx.b+d[j]-1
+      idx = c(1+j, idx.b:idx.e)
+      up <- iwls_beta_update(
+        idx = idx,
+        beta_curr = beta_curr,
+        X = X, y = y, X2 = X2,
+        k_post = k, k_deriv = k_deriv,
+        c_post = c, c_deriv = c_deriv, 
+        w = w,
+        tau = tau, tau_idx = tau_idx,
+        hess_eps = hess_eps
+      )
+      beta_curr <- up$beta
+      alfa_sample[m, j+1] <- exp(min(up$log_alpha, 0))
+      logpost_sample[m, j+1] <- up$logpost
+      acc[j+1] <- acc[j+1] + up$accepted
+      acc_tmp[j+1] <- acc_tmp[j+1] + up$accepted
+    }
+    
+    # Save updated beta after full update
     beta_sample[m, ] <- beta_curr
-    alfa_sample[m] <- exp(min(up$log_alpha, 0))
-    logpost_sample[m] <- up$logpost
-    acc <- acc + up$accepted
-    acc_tmp <- acc_tmp + up$accepted
+    
     
     # --- Update tau ---
     for (j in seq_len(2 * p)) {
@@ -359,11 +395,12 @@ MCMC_IWLS <- function(niter,
       #     "| logpost =", round(logpost_sample[m], 3), "\n")
       cat("iter =", m,
           "| acc rate (last 1k) =", round(acc_tmp / print_step, 3),
-          "| alpha mean (last 1k) =", round(mean(alfa_sample[(m-print_step+1):m]), 3),
-          "| acc rate =", round(acc / m, 3),
-          "| alpha mean =", round(mean(alfa_sample, na.rm = T), 3),
-          "| logpost =", round(logpost_sample[m], 3), "\n")
-      acc_tmp <- 0L
+          "| alpha mean (last 1k) =", round(colMeans(alfa_sample[(m-print_step+1):m, ]), 3),
+          # "| acc rate =", round(acc / m, 3),
+          # "| alpha mean =", round(mean(alfa_sample, na.rm = T), 3),
+          # "| logpost =", round(logpost_sample[m], 3), 
+          "\n")
+      acc_tmp <- rep(0L, p+1)
     }
   }
   
