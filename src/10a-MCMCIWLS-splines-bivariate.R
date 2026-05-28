@@ -167,9 +167,13 @@ for (s in 1:nrow(sim_settings)){
       tryCatch({
         a_tau1 = 2.1; a_tau2 = 1e-3
         b_tau1 = qgamma(0.001, shape = 2.1, rate = 1) * 5^2; b_tau2 = 1e-3
+        
+        k_post = k_multi; k_prop = (k_multi)^(4/5)
+        c_post = 1e-1; c_prop = 1e-1
+        
         out_MCMC = MCMC_IWLS(niter = niter, X = X_scaled, y = y, 
-                             k = k_multi, k_deriv = (k_multi)^(4/5),
-                             c = 1e-1, c_deriv = 1e-1, 
+                             k = k_post, k_deriv = k_prop,
+                             c = c_post, c_deriv = c_prop, 
                              p = p, d = d,
                              a_tau = c(a_tau1, a_tau1, a_tau2, a_tau2),
                              b_tau = c(b_tau1, b_tau1, b_tau2, b_tau2),
@@ -198,9 +202,10 @@ for (s in 1:nrow(sim_settings)){
         list(draws = draws_thin10, draws_tau = draws_tau_thin10,
              diagn = diagn, 
              w = out_MCMC$w, 
-             k = k_multi, k_deriv = k_multi,
-             c = 1e-1, c_deriv = 1e-1, 
-             x1 = x1, X_scaled = X_scaled, y = y,
+             k = k_post, k_deriv = k_prop,
+             c = c_post, c_deriv = c_prop, 
+             x1 = x1, x2 = x2, y = y,
+             Z1 = Z1, Z2 = Z2,
              DR1 = DR1[c("Trafo", "smooth_object")],
              DR2 = DR2[c("Trafo", "smooth_object")],
              setting = s_s, n_retry = n_retry,

@@ -1,6 +1,6 @@
 # REQUIRED LIBRARIES ----
-require(mvnfast)
-require(mvtnorm)
+# require(mvnfast)
+# require(mvtnorm)
 require(mgcv)
 
 # UTILS ----
@@ -304,7 +304,7 @@ MCMC_IWLS <- function(niter,
   )
   
   # alfa_sample <- matrix(NA_real_, nrow = niter, ncol = 1+p)
-  # logpost_sample <- matrix(NA_real_, nrow = niter, ncol = 1+p)
+  logpost_sample <- matrix(NA_real_, nrow = niter, ncol = 1+p)
   
   
   # --- Initial values ---
@@ -344,7 +344,7 @@ MCMC_IWLS <- function(niter,
     )
     beta_curr <- up$beta
     # alfa_sample[m, 1] <- exp(min(up$log_alpha, 0))
-    # logpost_sample[m, 1] <- up$logpost
+    logpost_sample[m, 1] <- up$logpost
     acc[1] <- acc[1] + up$accepted
     acc_tmp[1] <- acc_tmp[1] + up$accepted
     
@@ -395,10 +395,10 @@ MCMC_IWLS <- function(niter,
       #     "| logpost =", round(logpost_sample[m], 3), "\n")
       cat("iter =", m,
           "| acc rate (last 1k) =", round(acc_tmp / print_step, 3),
-          "| alpha mean (last 1k) =", round(colMeans(alfa_sample[(m-print_step+1):m, ]), 3),
-          # "| acc rate =", round(acc / m, 3),
+          # "| alpha mean (last 1k) =", round(colMeans(alfa_sample[(m-print_step+1):m, ]), 3),
+          "| acc rate =", round(acc / m, 3),
           # "| alpha mean =", round(mean(alfa_sample, na.rm = T), 3),
-          # "| logpost =", round(logpost_sample[m], 3), 
+          "| logpost =", round(logpost_sample[m], 3),
           "\n")
       acc_tmp <- rep(0L, p+1)
     }
