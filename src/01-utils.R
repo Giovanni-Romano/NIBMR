@@ -28,7 +28,8 @@ H_pop = function(idx, beta, y, X, X2, k, c){
   u = k_vec*eps
   
   F1 = k_vec^2 * exp(sqrt(c) - sqrt(u^2+c)) * ((u^2)/(u^2+c) - c/((u^2+c)^(3/2)))
-  out = colSums(X2[ , idx, drop = F] * F1, dims = 1)
+  # out = colSums(X2[ , idx, drop = F] * F1)
+  out = drop(crossprod(X2[ , idx, drop = F], F1))
   
   return(out)
 }
@@ -39,8 +40,8 @@ score_pop = function(idx, beta, y, X, k, c){
   u = k_vec*eps
   
   F1 = k_vec * exp(sqrt(c) - sqrt(u^2+c)) * u/sqrt(u^2+c)
-  out = colSums(X[ , idx, drop = F]*F1)
-  
+  # out = colSums(X[ , idx, drop = F]*F1)
+  out = drop(crossprod(X[ , idx, drop = F], F1))
   return(out)
 }
 
