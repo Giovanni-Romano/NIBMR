@@ -17,12 +17,12 @@ k_s = "init"
 # SIMULATION SETTINGS ----
 error_distr = c("Gaussian", "Gamma")
 cov_distr = "Unif_rad2" #c("Unif_rad2", "Beta_2_4") #"Gamma_1.5_1.5") #, "BVN")
-transform_x1 = c("parabola", "cubic", "trigonometric")
-transform_x2 = c("parabola", "cubic", "trigonometric")
+transform_x1 = factor(c("parabola", "cubic", "trigonometric"), levels = c("parabola", "cubic", "trigonometric"), ordered = T)
+transform_x2 = factor(c("parabola", "cubic", "trigonometric"), levels = c("parabola", "cubic", "trigonometric"), ordered = T)
 SNR = c(5, 2)
-sim_settings = as.matrix(expand.grid(error_distr, cov_distr, transform_x1, transform_x2, SNR))
+sim_settings = expand.grid(error_distr, cov_distr, transform_x1, transform_x2, SNR)
 colnames(sim_settings) = c("err_distr", "cov_distr", "transf_x1", "transf_x2", "SNR")
-sim_settings = sim_settings[sim_settings[ , "transf_x1"] != sim_settings[ , "transf_x2"], ]
+sim_settings = sim_settings %>% filter(transf_x1 < transf_x2) %>% as.matrix()
 ev_s = as.character(cmdline[2])  #c("hetero", "homo")
 
 results = vector("list", nrow(sim_settings))
@@ -57,8 +57,8 @@ for (s in 1:nrow(sim_settings)){
                     Gamma = function(ndraws, var_eta, SNR, hc) rgamma(ndraws, 2, sqrt(2*SNR/var_eta)/sqrt(hc)))
       
       verr = switch(ev_s,
-                    "homo" = function(x) 1,
-                    "hetero" = function(x) 0.25 + x^2)
+                    "homo" = function(x1, x2) 1,
+                    "hetero" = function(x1, x2) 0.25 + (x1^2)/2 + (x2^2)/2)
       
       rcov = switch(cd_s,
                     "Unif_rad2" = function(ndraws) runif(ndraws, -sqrt(2), sqrt(2)),
@@ -68,13 +68,13 @@ for (s in 1:nrow(sim_settings)){
                        "parabola" = function(x) x^2,
                        "cubic" = function(x) x^3,
                        "trigonometric" = function(x) sin(2.5*x) + 3*exp(-(5^2)*((x)^2))
-      )
+      ) # we can replace trigonometric with sin(2.5*x) + 2*exp(-(4^2)*((x)^2)), which should be easier to estimate
       
       transf2 = switch(tr2_s,
                        "parabola" = function(x) x^2,
                        "cubic" = function(x) x^3,
                        "trigonometric" = function(x) sin(2.5*x) + 3*exp(-(5^2)*((x)^2))
-      )
+      ) # we can replace trigonometric with sin(2.5*x) + 2*exp(-(4^2)*((x)^2)), which should be easier to estimate
       
       
       # Use tryCatch to avoid weird datasets with outliers on x and hence singular Z
@@ -93,7 +93,7 @@ for (s in 1:nrow(sim_settings)){
             eta = transf1(x1) + transf2(x2)
             var_eta = var(eta)
             
-            hetero_correction = 1 #verr(x1)/mean(verr(x1))
+            hetero_correction = verr(x1, x2)/mean(verr(x1, x2))
             
             # Mode shift
             mode_shift = switch(ed_s,
@@ -208,16 +208,22 @@ for (s in 1:nrow(sim_settings)){
              Z1 = Z1, Z2 = Z2,
              DR1 = DR1[c("Trafo", "smooth_object")],
              DR2 = DR2[c("Trafo", "smooth_object")],
+             beta_init = b_init, optim_opt = opt,
              setting = s_s, n_retry = n_retry,
              acc_prop = out_MCMC$acc_prop)
       }, error = function(e) {
         message("Task ", rep, " failed: ", e$message)
         return(list(draws = NULL, draws_tau = NULL,
-                    summ = NULL, diagn = NULL, 
-                    w =NULL, k = k_multi,
-                    x1 = x1, X_scaled = X_scaled, y = y, Z1 = Z1, Z2 = Z2,
+                    diagn = NULL, 
+                    w =NULL, k = k_post, k_deriv = k_prop,
+                    c = c_post, c_deriv = c_prop, 
+                    x1 = x1, x2 = x2, y = y,
+                    Z1 = Z1, Z2 = Z2,
+                    DR1 = DR1[c("Trafo", "smooth_object")],
+                    DR2 = DR2[c("Trafo", "smooth_object")],
+                    beta_init = b_init, optim_opt = opt,
                     setting = s_s, n_retry = n_retry,
-                    sd_prop = NULL, alfa = NULL))  # or NULL
+                    sd_prop = NULL, alfa = NULL))
       })
     }
   
