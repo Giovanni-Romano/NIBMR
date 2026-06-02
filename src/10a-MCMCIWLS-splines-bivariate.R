@@ -22,7 +22,8 @@ transform_x2 = factor(c("parabola", "cubic", "trigonometric"), levels = c("parab
 SNR = c(5, 2)
 sim_settings = expand.grid(error_distr, cov_distr, transform_x1, transform_x2, SNR)
 colnames(sim_settings) = c("err_distr", "cov_distr", "transf_x1", "transf_x2", "SNR")
-sim_settings = sim_settings %>% filter(transf_x1 < transf_x2) %>% as.matrix()
+sim_settings = sim_settings[sim_settings$transf_x1<sim_settings$transf_x2, ]  
+sim_settings = as.matrix(sim_settings)
 ev_s = as.character(cmdline[2])  #c("hetero", "homo")
 
 results = vector("list", nrow(sim_settings))
