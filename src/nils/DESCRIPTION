@@ -1,0 +1,38 @@
+Package: nils
+Title: Mode Regression Using a Nested Interval Least Squares Algorithm
+Version: 0.2
+Authors@R: 
+  c(person(given = "Laura",
+           family = "Hucker",
+           role = c("aut", "cre"),
+           email = "huckerla@student.hu-berlin.de",
+           comment = "modified original code by rewriting, adapting, optimizing and extending"),
+    person(given = "Margret",
+           family = "Oelker",
+           role = "aut",
+	   comment = "original maintainer of version 0.1"),
+    person(given = "Fabian",
+           family = "Sobotka",
+           role = "aut"),
+    person(given = "Nadja",
+           family = "Klein",
+           role = "aut"),
+    person(given = "Thomas",
+           family = "Kneib",
+           role = "aut"))
+Description: This package implements the NILS approach to mode regression proposed in Oelker et al. (2015) and evaluation tools to access the performance compared to the mode regression of Kemp et al. (2012), median or mean regression. It is an extended, adapted and optimized rewrite of the unpublished code used in Oelker et al. (2015).
+License: GPL (>= 2)
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.1.1
+Imports: stats, gamlss.dist, pbmcapply, purrr, parallel, mgcv, ggplot2,
+        dplyr, LaplacesDemon, gridExtra, quantreg
+NeedsCompilation: no
+Packaged: 2021-07-03 14:26:03 UTC; laura
+Author: Laura Hucker [aut, cre] (modified original code by rewriting, adapting,
+    optimizing and extending),
+  Margret Oelker [aut] (original maintainer of version 0.1),
+  Fabian Sobotka [aut],
+  Nadja Klein [aut],
+  Thomas Kneib [aut]
+Maintainer: Laura Hucker <huckerla@student.hu-berlin.de>
