@@ -6,4 +6,8 @@
 .Ruserdata
 *.rds
 *.RDS
+application/
+data/
+sim_study_nonC-GBI/
+stations.db
 
