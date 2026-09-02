@@ -4,3 +4,6 @@
 .Rhistory
 .RData
 .Ruserdata
+*.rds
+*.RDS
+
