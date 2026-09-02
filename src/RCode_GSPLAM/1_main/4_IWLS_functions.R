@@ -64,7 +64,7 @@ evaluate_log_FCP_beta0<-function(beta0,beta,X0,X,y,delta,K0,tau20,fine){
   
   E=eigen(H,symmetric=TRUE)
   H=E$vectors%*%diag(pmin(E$values,-0.01))%*%t(E$vectors) ## Hessian modification
-  # print(max(eigen(H)$values))
+  print(max(eigen(H)$values))
   
   ret[[3]]=H
   

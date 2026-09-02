@@ -211,7 +211,7 @@ nbpsscox<-function(y,delta,Xdummy=NULL,Xcont=NULL,Xspat=NULL,nonlin="DR",blockwi
   
   for(t in 1:(T-1)){
     
-    if (t%%1000 == 0){print(t)}
+    print(t)
     
     ## update beta0
     
@@ -236,7 +236,7 @@ nbpsscox<-function(y,delta,Xdummy=NULL,Xcont=NULL,Xspat=NULL,nonlin="DR",blockwi
         spike=dmargNSBP(beta[t+1,indices[[j]]],a,b,c[j,1],dim[j])
         slab=dmargNSBP(beta[t+1,indices[[j]]],a,b,c[j,2],dim[j])
         ratio=spike/slab
-        # print(ratio)
+        print(ratio)
         probi[t+1,j]=1/(1+ratio*(1-theta[t,j])/theta[t,j])
         gamma[t+1,j]=rbinom(n=1,size=1,prob=probi[t+1,j]) 
         tau2[t+1,j]=exp(perform_slice_step(log(tau2[t,j]),c(dim[j],sum(beta[t+1,indices[[j]]]^2),a,b,c[j,gamma[t+1,j]+1]),log_target_sbp)) ## smoothing variances of covariate effects
