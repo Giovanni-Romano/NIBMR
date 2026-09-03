@@ -49,14 +49,26 @@ coord_utm = sf::st_as_sf(X_spat_unique,
                          coords = c("longitude", "latitude"), crs = 4326) |> 
   sf::st_transform(crs = 32632) |> 
   sf::st_coordinates()
-coord_scaled = apply(coord_utm, 2, function(x) (x - min(x)) /  (max(x) - min(x)))
+
+# # Option 1: Normalize with observed observed min and max x and y coordinates
+# coord_scaled = apply(coord_utm, 2, function(x) (x - min(x)) /  (max(x) - min(x)))
+
+# Option 2: Normalize with Milan min and max x and y coordinates
+library(sf)
+milano <- st_read("https://dati.comune.milano.it/dataset/e75d91fa-eca6-4ee5-b96e-08bcdbb8d6f0/resource/f56cb432-83e6-48de-ae30-d39b4be61e85/download/confine_comune_milano_layer_0_confine_comune_milano.geojson")
+milano_utm <- st_transform(milano, crs = 32632)
+milano_coords <- st_coordinates(milano_utm)
+min_x_milano = min(milano_coords[, 1]); max_x_milano = max(milano_coords[, 1])
+min_y_milano = min(milano_coords[, 2]); max_y_milano = max(milano_coords[, 2])
+coord_scaled = coord_utm
+coord_scaled[ , 1] = (coord_utm[ , 1] - min_x_milano) / (max_x_milano - min_x_milano)
+coord_scaled[ , 2] = (coord_utm[ , 2] - min_y_milano) / (max_y_milano - min_y_milano)
+
 out_spatial_DR = construct_DR_Spatial(coord_scaled[ , 1], coord_scaled[ , 2], k1 = 5, k2 = 5)
 Z_spat_unique = bind_cols(station = X_spat_unique$station, 
                           out_spatial_DR$Z)
 colnames(Z_spat_unique) = c("station", paste0("spatial_DR", 1:ncol(out_spatial_DR$Z)))
-
 s = ncol(Z_spat_unique)-1
-
 
 
 data_for_regression = bind_cols(station = D$station, y = y, 
@@ -362,29 +374,33 @@ milano_utm <- st_transform(milano, crs = 32632)
 milano_coords <- st_coordinates(milano_utm)
 xmin = min(coord_utm[ , 1]); xmax = max(coord_utm[ , 1])
 ymin = min(coord_utm[ , 2]); ymax = max(coord_utm[ , 2])
-milano_coords[, 1] <- (milano_coords[, 1] - xmin) / (xmax - xmin)
-milano_coords[, 2] <- (milano_coords[, 2] - ymin) / (ymax - ymin)
+milano_coords_scaled = milano_coords
+milano_coords_scaled[, 1] <- (milano_coords[, 1] - xmin) / (xmax - xmin)
+milano_coords_scaled[, 2] <- (milano_coords[, 2] - ymin) / (ymax - ymin)
 
 pdf("application/bike-sharing/pics/results/spatial_effect_Paul_noconvex_logit.pdf", width = 11, height = 7)
 plot_effect_spat(coord_scaled, est[75:98], out_spatial_DR$Trafo,
+                 knots1 = out_spatial_DR$knots1, knots2 = out_spatial_DR$knots2,
                  xlim = c(-1, 1.5), ylim = c(-0.75, 1.25), convex_hull = F)
 lines(x = c(0, 1, 1, 0, 0), y = c(0, 0, 1, 1, 0), col = "grey", lwd = 2) # Add square [0, 1] x [0, 1]
-lines(milano_coords)
+lines(milano_coords_scaled)
 dev.off()
 
 pdf("application/bike-sharing/pics/results/spatial_effect_Paul_convex_logit.pdf", width = 11, height = 7)
 plot_effect_spat(coord_scaled, est[75:98], out_spatial_DR$Trafo, ngrid = 100,
+                 knots1 = out_spatial_DR$knots1, knots2 = out_spatial_DR$knots2,
                  xlim = c(-1, 1.5), ylim = c(-0.75, 1.25), convex_hull = T)
 lines(x = c(0, 1, 1, 0, 0), y = c(0, 0, 1, 1, 0), col = "grey", lwd = 2) # Add square [0, 1] x [0, 1]
-lines(milano_coords)
+lines(milano_coords_scaled)
 dev.off()
 
 
 pdf("application/bike-sharing/pics/results/spatial_effect_Paul_concave_logit.pdf", width = 11, height = 7)
 plot_effect_spat(coord_scaled, est[75:98], out_spatial_DR$Trafo, ngrid = 100,
+                 knots1 = out_spatial_DR$knots1, knots2 = out_spatial_DR$knots2,
                  xlim = c(-1, 1.5), ylim = c(-0.75, 1.25), concave_hull = T)
 lines(x = c(0, 1, 1, 0, 0), y = c(0, 0, 1, 1, 0), col = "grey", lwd = 2) # Add square [0, 1] x [0, 1]
-lines(milano_coords)
+lines(milano_coords_scaled)
 dev.off()
 
 ## My plot ----

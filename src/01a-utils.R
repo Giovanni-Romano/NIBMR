@@ -181,7 +181,9 @@ construct_DR_Spatial<-function(x1, x2, k1 = 10, k2 = 10, normalize_cols = FALSE)
   ret[[3]]=B
   ret[[4]] = B1
   ret[[5]] = B2
-  names(ret)=c("Z","Trafo","B", "B1", "B2")
+  ret[[6]] = fit1[[1]]$knots
+  ret[[7]] = fit2[[1]]$knots
+  names(ret)=c("Z","Trafo","B", "B1", "B2", "knots1", "knots2")
   
   return(ret)
 }
@@ -371,6 +373,8 @@ plot_spatial_splines = function(coord, grid, bases, idx_to_plot, normalize = FAL
   }
   
   
+  ncol_wrap = ceiling(sqrt(length(idx_to_plot)) * 1.5)
+  
   # Plot with contour lines + points
   plt = ggplot() +
     geom_contour_filled(data = df_plot, aes(x = x1, y = x2, z = Value),
@@ -381,16 +385,19 @@ plot_spatial_splines = function(coord, grid, bases, idx_to_plot, normalize = FAL
                  breaks = breaks) +
     geom_point(data = df_points, aes(x = x1, y = x2), 
                color = "red", size = 1, shape = 16, alpha = 0.75) +
+    scale_x_continuous(limits = c(0, 1)) +
+    scale_y_continuous(limits = c(0, 1)) +
     # scale_fill_brewer(palette = palette, direction = -1) +
     scale_fill_manual(values = palette, name = "") +
-    facet_wrap(~ Basis) +
+    facet_wrap(~ Basis, ncol = ncol_wrap) +
     coord_equal() +
-    theme_minimal() +
+    theme_bw() +
+    theme(panel.grid = element_blank()) +
     labs(title = title, x = "x1", y = "x2", fill = "Value of Basis Function")
   
   if (!is.null(boundaries)){
-    plt +  geom_path(data = milano_coords,
-                     mapping = aes(x = X, y = Y))
+    plt = plt +  geom_path(data = data.frame(x = boundaries[, 1], y = boundaries[, 2]),
+                     mapping = aes(x = x, y = y))
   }
   
   plt
@@ -400,6 +407,7 @@ plot_spatial_splines = function(coord, grid, bases, idx_to_plot, normalize = FAL
 plot_effect_spat<-function(Xspat, beta_est, Trafo, xlim=c(-0.2,1.2), ylim=c(-0.2,1.2), 
                            convex_hull = FALSE, concave_hull = FALSE,
                            ncol = 30, ngrid = 100, k1 = 5, k2 = 5,
+                           knots1, knots2,
                            name = "", cex = 1){
   
   require(plot3D)
@@ -419,8 +427,10 @@ plot_effect_spat<-function(Xspat, beta_est, Trafo, xlim=c(-0.2,1.2), ylim=c(-0.2
   t1n=TT[,1]
   t2n=TT[,2]
   
-  BT1=smoothCon(s(t1n,bs="ps",k=k1,m=c(2,1)),data=data.frame(t1n),scale.penalty=FALSE)[[1]]$X
-  BT2=smoothCon(s(t2n,bs="ps",k=k2,m=c(2,1)),data=data.frame(t2n),scale.penalty=FALSE)[[1]]$X
+  BT1=smoothCon(s(t1n,bs="ps",k=k1,m=c(2,1)), knots = data.frame(knots1),
+                data=data.frame(t1n),scale.penalty=FALSE)[[1]]$X
+  BT2=smoothCon(s(t2n,bs="ps",k=k2,m=c(2,1)), knots = data.frame(knots2),
+                data=data.frame(t2n),scale.penalty=FALSE)[[1]]$X
   
   BT=tensor.prod.model.matrix(list(BT1,BT2))
   

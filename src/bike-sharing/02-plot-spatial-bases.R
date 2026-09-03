@@ -24,7 +24,18 @@ coord_utm = sf::st_as_sf(X_spat_unique,
                          coords = c("longitude", "latitude"), crs = 4326) |> 
   sf::st_transform(crs = 32632) |> 
   sf::st_coordinates()
-coord_scaled = apply(coord_utm, 2, function(x) (x - min(x)) /  (max(x) - min(x)))
+
+
+# # Option 1: Normalize with observed observed min and max x and y coordinates
+min_x = min(coord_utm[ , 1]); max_x = max(coord_utm[ , 1])
+min_y = min(coord_utm[ , 2]); max_y = max(coord_utm[ , 2])
+coord_scaled = coord_utm
+coord_scaled[ , 1] = (coord_utm[ , 1] - min_x) / (max_x - min_x)
+coord_scaled[ , 2] = (coord_utm[ , 2] - min_y) / (max_y - min_y)
+milano_coords_scaled = milano_coords
+milano_coords_scaled[ , 1] = (milano_coords[ , 1] - min_x) / (max_x - min_x)
+milano_coords_scaled[ , 2] = (milano_coords[ , 2] - min_y) / (max_y - min_y)
+
 n_bases = 5
 out_spatial_DR = construct_DR_Spatial(coord_scaled[ , 1], coord_scaled[ , 2], 
                                       k1 = n_bases, k2 = n_bases)
@@ -33,8 +44,8 @@ x1=coord_scaled[,1]
 x2=coord_scaled[,2]
 
 ngrid = 100
-t1=seq(min(x1),max(x1),length=ngrid)
-t2=seq(min(x2),max(x2),length=ngrid)
+t1=seq(0, 1, length=ngrid)
+t2=seq(0, 1,length=ngrid)
 
 TT=expand.grid(t1,t2)
 
@@ -48,10 +59,14 @@ BT=tensor.prod.model.matrix(list(BT1,BT2))
 XT=BT%*%out_spatial_DR$Trafo
 
 plt_DR = plot_spatial_splines(coord = coord_scaled, grid = TT, bases = XT, type = "DR",
-                              idx_to_plot = 1:(n_bases^2-1), normalize = F, title = "2D DR Splines")
+                              idx_to_plot = 1:(n_bases^2-1), normalize = F, 
+                              boundaries = milano_coords_scaled,
+                              title = "2D DR Splines")
 
 plt_Bspl = plot_spatial_splines(coord = coord_scaled, grid = TT, bases = BT, type = "B-Splines",
-                                idx_to_plot = 1:n_bases^2, normalize = F, title = "2D B-Splines")
+                                idx_to_plot = 1:n_bases^2, normalize = F, 
+                                boundaries = milano_coords_scaled,
+                                title = "2D B-Splines")
 
 ggsave(filename = "spatial_basis_DR.pdf",
        path = "application/bike-sharing/pics/data",
