@@ -28,6 +28,8 @@ coord_scaled = apply(coord_utm, 2, function(x) (x - min(x)) /  (max(x) - min(x))
 n_bases = 5
 out_spatial_DR = construct_DR_Spatial(coord_scaled[ , 1], coord_scaled[ , 2], 
                                       k1 = n_bases, k2 = n_bases)
+out_spatial_BSpl = construct_BSplines_spatial(coord_scaled[ , 1], coord_scaled[ , 2], 
+                                              k1 = n_bases, k2 = n_bases)
 
 x1=coord_scaled[,1]
 x2=coord_scaled[,2]

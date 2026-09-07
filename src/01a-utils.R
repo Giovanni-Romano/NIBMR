@@ -133,8 +133,36 @@ reconstruct_DR_for_grid <- function(x, Z_saved, x_grid, d = 20, rescale = TRUE) 
   )
 }
 
+# BSplines for continuous spatial effect
+construct_BSplines_spatial = function(x1, x2, k1 = 5, k2 = 5){
+  
+  ### ### ### ### ### ### ### ### ### ### ### ### ### ### ###
+  ###                     WARNING                         ###
+  ### The B-Splines for the spatial effect are NOT        ###
+  ### corrected yet to be used with a separate intercept. ###
+  ### Before proceeding, a sum-to-0 constraint is needed. ###
+  ### Do NOT use absorb.cons = TRUE in the marginal bases ###
+  ### because it will reduce the number of bases from     ###
+  ### k1*k2 to (k1-1)*(k2-1) while we need to constraint  ###
+  ### the tensor product splines to sum-to-0, so moving   ###
+  ### from k1*k2 to k1*k2-1. This is not implemented yet. ###
+  ### ### ### ### ### ### ### ### ### ### ### ### ### ### ###
+  
+  n = length(x1)
+  
+  fit1=smoothCon(s(x1,bs="bs",k=k1),data=data.frame(x1),scale.penalty=FALSE)
+  fit2=smoothCon(s(x2,bs="bs",k=k2),data=data.frame(x2),scale.penalty=FALSE)
+  
+  B1=fit1[[1]]$X
+  B2=fit2[[1]]$X
+  
+  B=tensor.prod.model.matrix(list(B1,B2))
+  
+  return(B)
+}
+
 # DR decomposition for continuous spatial components from Paul's code
-construct_DR_Spatial<-function(x1, x2, k1 = 10, k2 = 10, normalize_cols = FALSE){
+construct_DR_Spatial<-function(x1, x2, k1 = 10, k2 = 10){
   
   require(geigen)
   

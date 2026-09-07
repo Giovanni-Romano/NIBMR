@@ -50,12 +50,19 @@ coord_utm = sf::st_as_sf(X_spat_unique,
   sf::st_transform(crs = 32632) |> 
   sf::st_coordinates()
 coord_scaled = apply(coord_utm, 2, function(x) (x - min(x)) /  (max(x) - min(x)))
-out_spatial_DR = construct_DR_Spatial(coord_scaled[ , 1], coord_scaled[ , 2], k1 = 5, k2 = 5)
-Z_spat_unique = bind_cols(station = X_spat_unique$station, 
-                          out_spatial_DR$Z)
-colnames(Z_spat_unique) = c("station", paste0("spatial_DR", 1:ncol(out_spatial_DR$Z)))
+out_Bspl_spat = construct_BSplines_spatial(coord_scaled[ , 1], coord_scaled[ , 2], k1 = 6, k2 = 6)
 
-s = ncol(Z_spat_unique)-1
+### ### ### ### ### ### ### ### ### ### ### ### ### ### ###
+###                     WARNING                         ###
+### The B-Splines for the spatial effect are NOT        ###
+### corrected yet to be used with a separate intercept. ###
+### Before proceeding, a sum-to-0 constraint is needed. ###
+### ### ### ### ### ### ### ### ### ### ### ### ### ### ###
+Z_spat_unique = bind_cols(station = X_spat_unique$station, 
+                          out_Bspl_spat)
+colnames(Z_spat_unique) = c("station", paste0("spatial_Bspl", 1:ncol(out_Bspl_spat)))
+
+s = ncol(Z_spat_unique) - 1
 
 
 
