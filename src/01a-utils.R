@@ -190,8 +190,8 @@ construct_DR_Spatial<-function(x1, x2, k1 = 10, k2 = 10, normalize_cols = FALSE)
 
 ## IWLS utils ----
 ### IWLS single update ----
-iwls_beta_update <- function(idx, beta_curr, 
-                             X, y, X2, freq = 1,
+iwls_beta_update <- function(idx, beta_curr, u_curr,
+                             y, X, X2, freq = 1,
                              link, link_prime, link_second,
                              k_post, k_deriv, 
                              c_post, c_deriv, 
@@ -200,7 +200,7 @@ iwls_beta_update <- function(idx, beta_curr,
                              step = 1){
   # Current state
   cur <- eval_logfullcond_beta(
-    idx = idx, beta = beta_curr, 
+    idx = idx, beta = beta_curr, u = u_curr,
     X = X, y = y, X2 = X2, freq = freq,
     link = link, link_prime = link_prime, link_second = link_second,
     k_post = k_post, k_deriv = k_deriv, 
@@ -219,7 +219,7 @@ iwls_beta_update <- function(idx, beta_curr,
   
   # Proposed state
   prop <- eval_logfullcond_beta(
-    idx = idx, beta = beta_prop, 
+    idx = idx, beta = beta_prop, u = u_curr,
     X = X, y = y, X2 = X2, freq = freq,
     link = link, link_prime = link_prime, link_second = link_second,
     k_post = k_post, k_deriv = k_deriv,
@@ -264,9 +264,81 @@ iwls_beta_update <- function(idx, beta_curr,
   }
 }
 
+
+iwls_re_update <- function(u_curr, y, fe, freq = 1,
+                           link, link_prime, link_second,
+                           k_post, k_deriv, 
+                           c_post, c_deriv, 
+                           w, sigma2_u,
+                           hess_eps = 1e-3,
+                           step = 1){
+  # Current state
+  cur <- eval_logfullcond_re(
+    y = y, fe = fe, u = u_curr,
+    freq = freq,
+    link,  link_prime, link_second,
+    k_post, k_deriv, 
+    c_post, c_deriv,
+    w, sigma2_u
+  )
+  
+  Hc <- make_negdef(cur$H, eps = hess_eps)
+  Sigma_c <- - 1/Hc
+  mu_c <- drop(u_curr + step*Sigma_c*cur$grad)
+  
+  # Proposal draw
+  u_prop <- rnorm(1, mean = mu_c, sd = sqrt(Sigma_c))
+  
+  # Proposed state
+  prop <- eval_logfullcond_re(
+    y = y, fe = fe, u = u_prop,
+    freq = freq,
+    link,  link_prime, link_second,
+    k_post, k_deriv, 
+    c_post, c_deriv,
+    w, sigma2_u
+  )
+  
+  Hp <- make_negdef(prop$H, eps = hess_eps)
+  Sigma_p <- -1/Hp
+  mu_p <- drop(u_prop + step*Sigma_p*prop$grad)
+  
+  # MH acceptance probability
+  log_q_prop_given_cur <- sum(dnorm(u_prop, mean = mu_c, sd = sqrt(Sigma_c), log = T))
+  log_q_cur_given_prop <- sum(dnorm(u_curr, mean = mu_p, sd = sqrt(Sigma_p), log = T))
+  
+  # Check if it's the target ratio or the proposal ratio that brings acceptance to zero
+  if (as.numeric(get("verbose", envir = sys.frame(sys.parent(2)))) > 2){
+    if (get("m", envir = parent.frame()) %% get("print_step", envir = parent.frame()) == 0){
+      cat("RE update  |  Target diff:", round(prop$logpost - cur$logpost, 2), 
+          "| Proposal diff:", round(log_q_cur_given_prop - log_q_prop_given_cur, 2), "\n")
+    } 
+  }
+  
+  log_alpha <- prop$logpost - cur$logpost +
+    log_q_cur_given_prop - log_q_prop_given_cur
+  
+  if (log(runif(1)) < log_alpha) {
+    list(
+      u = u_prop,
+      accepted = 1,
+      log_alpha = log_alpha,
+      logpost = prop$logpost
+    )
+  } else {
+    list(
+      u = u_curr,
+      accepted = 0,
+      log_alpha = log_alpha,
+      logpost = cur$logpost
+    )
+  }
+}
+
+
 ### Log-full-conditional ----
 eval_logfullcond_beta <- function(idx, beta, 
-                                  X, y, X2 = X2, freq = 1,
+                                  X, y, X2 = X2, freq = 1, u,
                                   link,  link_prime, link_second,
                                   k_post, k_deriv, 
                                   c_post, c_deriv,
@@ -275,7 +347,7 @@ eval_logfullcond_beta <- function(idx, beta,
   loss_fun <- loss_asymm
   
   # --- log-likelihood ---
-  eta <- X %*% beta
+  eta <- X %*% beta + u
   r <- drop(y - link(eta))
   loglik <- -w * sum(freq * loss_fun(r, k = k_post, c = c_post))
   
@@ -311,10 +383,246 @@ eval_logfullcond_beta <- function(idx, beta,
   )
 }
 
+
+eval_logfullcond_re <- function(y, fe, u,
+                                freq = 1,
+                                link,  link_prime, link_second,
+                                k_post, k_deriv, 
+                                c_post, c_deriv,
+                                w, sigma2_u) {
+  
+  loss_fun <- loss_asymm
+  
+  # --- log-likelihood ---
+  r <- drop(y - link(fe + u))
+  loglik <- -w * sum(freq * loss_fun(r, k = k_post, c = c_post))
+  
+  grad_ll = w * score_pop(idx = 1, beta = u, 
+                          y = y, X = matrix(rep(1, length(y)), ncol = 1), freq = freq,
+                          k = k_deriv, c = c_deriv, 
+                          link = link, link_prime = link_prime) 
+  H_ll = w * H_pop(idx = 1, beta = u, 
+                   y = y, X = matrix(rep(1, length(y)), ncol = 1), 
+                   X2 = matrix(rep(1, length(y)), ncol = 1), freq = freq,
+                   k = k_deriv, c = c_deriv, 
+                   link = link, link_prime = link_prime, link_second = link_second)
+  
+  # --- Gaussian prior ---
+  Omega <- 1 / (sigma2_u)
+  logprior <- -0.5 * u^2 / (sigma2_u)
+  grad_prior <- - (Omega * u)
+  H_prior <- - Omega
+  
+  # --- full conditional ---
+  logpost <- loglik + logprior
+  grad <- grad_ll + grad_prior
+  H <- H_ll + H_prior
+  
+  list(
+    logpost = as.numeric(logpost),
+    grad = drop(grad),
+    H = H
+  )
+}
+
 ### Enforce symmetry and negative definiteness in Hessian ----
 make_negdef <- function(H, eps = 1e-3) {
   H[H>=0] = -eps
   return(H)
+}
+
+
+## Slice sampler for sigma_u (sd rand. eff.) DO NOT USE ----
+update_sigma_u <- function(sigma_u_curr, u, 
+                           A, nu = 1, 
+                           slice_w = 1, m = 30) {
+  
+  
+  # Work on z = log(sigma_u)
+  z_curr <- log(sigma_u_curr)
+  
+  # Log posterior of sigma_u
+  # p(sigma_u | u) propto p(u | sigma_u) p(sigma_u)
+  # Transformation of density for z: p(z | u) = p(exp(z) | u) * exp(z)
+  # - z = g(sigma_u) = log(sigma_u)
+  # - d/dz g^{-1}(z) = d/dz exp(z) = exp(z)
+  
+  logpost_z = function(z) {
+    
+    sigma = exp(z)
+    
+    # Random-effects likelihood: u_i | sigma ~ N(0, sigma^2)
+    loglik_u = -length(u) * log(sigma) - sum(u^2) / (2 * sigma^2)
+    
+    # Half-t prior.
+    # Density of t with nu df, location 0 and scale A.
+    # The t density should be multiplied by 2 because it's half-t, but
+    # the factor 2 is constant and can be omitted.
+    logprior_sigma = dt(sigma / A, df = nu, log = TRUE) - log(A)
+    
+    # Jacobian in logpost is log(exp(z)) = z
+    log_jacobian = z
+    
+    loglik_u + logprior_sigma + log_jacobian
+  }
+  
+  
+  # Slice level: y ~ Uniform(0, logpost_z) --> log_y = logpost_z + log(U(0, 1)) = logpost_z - rexp(1)
+  log_y = logpost_z(z_curr) - rexp(1)
+  
+  
+  # Step out procedure
+  u_rand <- runif(1, 0, slice_w)
+  L = z_curr - u_rand
+  R = L + slice_w
+  J = floor(runif(1, 0, m))
+  K = (m - 1) - J
+  
+  while (J > 0 && log_y < logpost_z(L)) {
+    L = L - slice_w
+    J = J - 1
+  }
+  
+  while (K > 0 && logpost_z(R) > log_y) {
+    R = R + slice_w
+    K = K - 1
+  }
+  
+  
+  # Shrinkage
+  repeat {
+    
+    # Sample z_prop from the interval [L, R]
+    z_prop <- runif(1, L, R)
+    
+    # If it is in the slice, accept it and break the loop
+    if (logpost_z(z_prop) >= log_y) {
+      break
+    }
+    
+    # If z_prop it's outside the slice, shrink the interval [L, R] accordingly
+    if (z_prop < z_curr) {
+      L <- z_prop
+    } else {
+      R <- z_prop
+    }
+  }
+  
+  
+  # Return
+  sigma_new <- exp(z_prop)
+  
+  return(sigma_new)
+}
+
+
+eval_logfullcond_SDP = function(log_tau2, K, rank_K, beta, theta){
+  # u is the notation used in Klein and Kneib (2016)
+  # I use log_tau as argument because for me u is the random effect
+  u  = log_tau2
+  aux = drop(beta%*%K%*%beta)/(2 * exp(u))
+  logpost = u/2*(1 - rank_K) - aux - (exp(u)/theta)^(1/2)
+  fd = (1 - rank_K)/2 + aux - (exp(u)/(4*theta))^(1/2)
+  sd = -aux - (exp(u)/(16*theta))^(1/2)
+  return(list(logpost = logpost, grad = fd, hess = sd))
+}
+
+iwls_SDP_update = function(log_tau2, K, rank_K, beta, theta, step = 1){
+  
+  # Current state
+  cur <- eval_logfullcond_SDP(log_tau2 = log_tau2, K = K, rank_K = rank_K, beta = beta, theta = theta)
+  
+  Hc <- cur$hess
+  Sigma_c <- - 1/Hc
+  mu_c <- drop(log_tau2 + step*Sigma_c*cur$grad)
+  
+  # Proposal draw
+  log_tau2_prop <- rnorm(1, mean = mu_c, sd = sqrt(Sigma_c))
+  
+  # Proposed state
+  prop <- eval_logfullcond_SDP(log_tau2 = log_tau2_prop, K = K, rank_K = rank_K, 
+                               beta = beta, theta = theta)
+  
+  Hp <- prop$hess
+  Sigma_p <- -1/Hp
+  mu_p <- drop(log_tau2_prop + step*Sigma_p*prop$grad)
+  
+  # MH acceptance probability
+  log_q_prop_given_cur <- sum(dnorm(log_tau2_prop, mean = mu_c, sd = sqrt(Sigma_c), log = T))
+  log_q_cur_given_prop <- sum(dnorm(log_tau2, mean = mu_p, sd = sqrt(Sigma_p), log = T))
+  
+  # Check if it's the target ratio or the proposal ratio that brings acceptance to zero
+  if (as.numeric(get("verbose", envir = sys.frame(sys.parent(2)))) > 2){
+    if (get("m", envir = sys.frame(sys.parent(2))) %% get("print_step", envir = sys.frame(sys.parent(2))) == 0){
+      cat("SDP  |  Target diff:", round(prop$logpost - cur$logpost, 2), 
+          "| Proposal diff:", round(log_q_cur_given_prop - log_q_prop_given_cur, 2), "\n")
+    } 
+  }
+  
+  log_alpha <- prop$logpost - cur$logpost +
+    log_q_cur_given_prop - log_q_prop_given_cur
+  
+  if (log(runif(1)) < log_alpha) {
+    list(
+      log_tau2 = log_tau2_prop,
+      accepted = 1,
+      log_alpha = log_alpha,
+      logpost = prop$logpost
+    )
+  } else {
+    list(
+      log_tau2 = log_tau2,
+      accepted = 0,
+      log_alpha = log_alpha,
+      logpost = cur$logpost
+    )
+  }
+}
+
+## Random effects update ----
+update_re <- function(u, sigma2_u, id, theta,
+                      y, X, freq,
+                      beta,
+                      link, link_prime, link_second,
+                      k_post, k_deriv, c_post, c_deriv, w,
+                      hess_eps = 1e-3, step = 1
+) {
+  
+  fe = X %*% beta
+  id_unique = unique(id)
+  n_id = length(id_unique)
+  
+  u_new = rep(NA, n_id)
+  acc_u = rep(NA, n_id)
+  
+  # Update each random effect u_i separately
+  for (i in 1:n_id){
+    id_i = id_unique[i]
+    y_i = y[id == id_i]
+    fe_i = fe[id == id_i]
+    freq_i = freq[id == id_i]
+    u_i = u[i]
+    up_re = iwls_re_update(u_curr = u_i, y = y_i, fe = fe_i, freq = freq_i,
+                           link = link, link_prime = link_prime, link_second = link_second,
+                           k_post = k_post, k_deriv = k_deriv, 
+                           c_post = c_post, c_deriv = c_deriv, 
+                           w = w, sigma2_u = sigma2_u,
+                           hess_eps = hess_eps,
+                           step = step)
+    
+    acc_u[i] = up_re$accepted
+    u_new[i] = up_re$u
+  }
+  
+  # Update sigma2_u using the Scale Dependent Prior (SDP) by Klein&Kneib (2016, BA)
+  up_sigma2_u = iwls_SDP_update(log_tau2 = log(sigma2_u), 
+                                K = diag(1, n_id), rank_K = n_id, 
+                                beta = u_new, theta = theta, step = 1)
+  
+  sigma2_u_new = exp(up_sigma2_u$log_tau2)
+  acc_sigma2_u = up_sigma2_u$accepted
+  
+  list(u = u_new, sigma2_u = sigma2_u_new, acc_u = acc_u, acc_sigma2_u = acc_sigma2_u)
 }
 
 
@@ -397,7 +705,7 @@ plot_spatial_splines = function(coord, grid, bases, idx_to_plot, normalize = FAL
   
   if (!is.null(boundaries)){
     plt = plt +  geom_path(data = data.frame(x = boundaries[, 1], y = boundaries[, 2]),
-                     mapping = aes(x = x, y = y))
+                           mapping = aes(x = x, y = y))
   }
   
   plt
@@ -459,7 +767,7 @@ plot_effect_spat<-function(Xspat, beta_est, Trafo, xlim=c(-0.2,1.2), ylim=c(-0.2
   
   colors = colorRampPalette(c("#4575b4", "#f7f7f7", "#d73027"))(ncol)
   M = max(abs(fhat), na.rm = TRUE)
-  breaks = round(seq(-M, M, length.out = ncol + 1))
+  breaks = round(seq(-M, M, length.out = ncol + 1), 2)
   image2D(t1,t2,z=fhat,contour=FALSE,main="Spatial effect", 
           col=colors, breaks = breaks,
           xlab="Easting",ylab="Northing",xlim=xlim,ylim=ylim)

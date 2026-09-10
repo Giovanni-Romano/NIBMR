@@ -185,6 +185,7 @@ MCMC_IWLS_bikes <- function(niter,
                             X_cont = NULL,
                             Z_cont = NULL,
                             Z_spat = NULL,
+                            id,
                             y,
                             freq = NULL,
                             link = function(x) x,
@@ -194,6 +195,7 @@ MCMC_IWLS_bikes <- function(niter,
                             d, # splines dimension for every continuous covariate
                             beta0,
                             a_tau, b_tau,
+                            theta_re,
                             debug = FALSE, verbose = 0, print_step = 1000,
                             hess_eps = 1e-3,
                             step = 1,
@@ -218,7 +220,6 @@ MCMC_IWLS_bikes <- function(niter,
     s = ncol(Z_spat)
   }
   n = length(y)
-  
   
   if (!(length(d) == p)) {
     stop("Length of d must be equal to number of continuous covariates (i.e. # cols of X_cont)")
@@ -251,7 +252,7 @@ MCMC_IWLS_bikes <- function(niter,
   K <- K_fold
   if (verbose > 0) cat("Start ", K, "-fold CV. ", sep = "")
   fold_id <- sample(rep(1:K, length.out = n))
-
+  
   CV <- sapply(1:K, function(f) {
     test_idx  <- which(fold_id == f)
     train_idx <- setdiff(seq_len(n), test_idx)
@@ -279,7 +280,6 @@ MCMC_IWLS_bikes <- function(niter,
   # --- Storage ---
   beta_sample <- matrix(NA_real_, nrow = niter, ncol = P)
   colnames(beta_sample) <- colnames(X)
-  
   tau_sample <- matrix(NA_real_, nrow = niter, ncol = q + 2 * p + 1*(s>0))
   # colnames(tau_sample) <- c(
   #   paste0("tau_bin", seq_len(q)),
@@ -287,12 +287,19 @@ MCMC_IWLS_bikes <- function(niter,
   #   paste0("tau_nonlin", seq_len(p)),
   #   "tau_spat")
   
-  
+  # --- Storage for random effects ---
+  # u_i ~ N(0, sigma_u^2)
+  # sigma_u ~ half-t with nu_re df, location 0 and scale A_re
+  id_fac <- match(id, unique(id))
+  n_id <- max(id_fac)
+  u_sample   <- matrix(NA_real_, nrow = niter, ncol = n_id)
+  sigma2u_sample <- numeric(niter)
   
   
   # --- Initial values ---
   beta_curr <- unname(drop(beta0))
   tau <- rep(10, q + 2 * p + 1*(s>0))
+  
   
   # Maps beta[-1] to the corresponding tau component:
   # first q coefficients are binary covariates,
@@ -310,12 +317,26 @@ MCMC_IWLS_bikes <- function(niter,
   IG_size_vec <- c(rep(1, q + p), d)
   if (s > 0) IG_size_vec <- c(IG_size_vec, s)
   
-  # Storage for acceptance/rejection of MH
+  
+  # Initial values for parameter-expanded random effects
+  sigma2u_curr <-rweibull(n = 1, shape = 1/2, scale = theta_re)
+  u_curr <- rnorm(n_id, mean = 0, sd = 1)
+  
+  
+  
+  # ---  Storage for acceptance/rejection of MH
   n_sp_up = floor(s / 5) + 1*(s %% 5 > 0)
   acc <- rep(0L, 1+q+2*p+n_sp_up)
-  # acc <- rep(0L, 1+q+2*p+1*(s>0))
   acc_tmp <- acc
+  
+  acc_re_u <- rep(0L, n_id)
+  acc_re_sigma2u  <- 0L
+  acc_re_u_tmp <- acc_re_u
+  acc_re_sigma2u_tmp  <- acc_re_sigma2u
+  
   logpost_sample <- matrix(NA_real_, nrow = niter, ncol = length(acc))
+  
+  
   
   # --- Precompute outer X ---
   X2 <- X^2
@@ -337,7 +358,8 @@ MCMC_IWLS_bikes <- function(niter,
     up <- iwls_beta_update(
       idx = 1,
       beta_curr = beta_curr,
-      X = X, y = y, X2 = X2,
+      u_curr = u_curr[id_fac],
+      y = y, X = X, X2 = X2,
       freq = freq,
       link = link, link_prime = link_prime, link_second = link_second,
       k_post = k, k_deriv = k_deriv,
@@ -360,7 +382,8 @@ MCMC_IWLS_bikes <- function(niter,
         up <- iwls_beta_update(
           idx = idx,
           beta_curr = beta_curr,
-          X = X, y = y, X2 = X2,
+          u_curr = u_curr[id_fac],
+          y = y, X = X, X2 = X2,
           freq = freq,
           link = link, link_prime = link_prime, link_second = link_second,
           k_post = k, k_deriv = k_deriv,
@@ -384,7 +407,8 @@ MCMC_IWLS_bikes <- function(niter,
         up <- iwls_beta_update(
           idx = idx,
           beta_curr = beta_curr,
-          X = X, y = y, X2 = X2,
+          u_curr = u_curr[id_fac],
+          y = y, X = X, X2 = X2,
           freq = freq,
           link = link, link_prime = link_prime, link_second = link_second,
           k_post = k, k_deriv = k_deriv,
@@ -410,7 +434,8 @@ MCMC_IWLS_bikes <- function(niter,
         up <- iwls_beta_update(
           idx = idx,
           beta_curr = beta_curr,
-          X = X, y = y, X2 = X2,
+          u_curr = u_curr[id_fac],
+          y = y, X = X, X2 = X2,
           freq = freq,
           link = link, link_prime = link_prime, link_second = link_second,
           k_post = k, k_deriv = k_deriv,
@@ -433,15 +458,16 @@ MCMC_IWLS_bikes <- function(niter,
       idx.e = 1 + q + p + sum(d)
       
       for (r in 1:n_sp_up){
-
+        
         idx.b = idx.e + 1
         idx.e = min(idx.b + 4, P)
         idx = idx.b:idx.e
-
+        
         up <- iwls_beta_update(
           idx = idx,
           beta_curr = beta_curr,
-          X = X, y = y, X2 = X2,
+          u_curr = u_curr[id_fac],
+          y = y, X = X, X2 = X2,
           freq = freq,
           link = link, link_prime = link_prime, link_second = link_second,
           k_post = k, k_deriv = k_deriv,
@@ -456,33 +482,61 @@ MCMC_IWLS_bikes <- function(niter,
         acc[1+q+2*p+r] <- acc[1+q+2*p+r] + up$accepted
         acc_tmp[1+q+2*p+r] <- acc_tmp[1+q+2*p+r] + up$accepted
       }
-
       
-        # idx.b = idx.e + 1
-        # idx.e = idx.e + s
-        # idx = idx.b:idx.e
-        # 
-        # up <- iwls_beta_update(
-        #   idx = idx,
-        #   beta_curr = beta_curr,
-        #   X = X, y = y, X2 = X2,
-        #   freq = freq,
-        #   link = link, link_prime = link_prime, link_second = link_second,
-        #   k_post = k, k_deriv = k_deriv,
-        #   c_post = c, c_deriv = c_deriv, 
-        #   w = w,
-        #   tau = tau, tau_idx = tau_idx,
-        #   hess_eps = hess_eps,
-        #   step = step/4
-        # )
-        # beta_curr <- up$beta
-        # logpost_sample[m, 1+q+2*p+1] <- up$logpost
-        # acc[1+q+2*p+1] <- acc[1+q+2*p+1] + up$accepted
-        # acc_tmp[1+q+2*p+1] <- acc_tmp[1+q+2*p+1] + up$accepted
+      # Single block update for spatial effects (acc. prob. too low)
+      # idx.b = idx.e + 1
+      # idx.e = idx.e + s
+      # idx = idx.b:idx.e
+      # 
+      # up <- iwls_beta_update(
+      #   idx = idx,
+      #   beta_curr = beta_curr,
+      #   u_curr = u_curr[id_fac],
+      #   y = y, X = X, X2 = X2,
+      #   freq = freq,
+      #   link = link, link_prime = link_prime, link_second = link_second,
+      #   k_post = k, k_deriv = k_deriv,
+      #   c_post = c, c_deriv = c_deriv, 
+      #   w = w,
+      #   tau = tau, tau_idx = tau_idx,
+      #   hess_eps = hess_eps,
+      #   step = step/4
+      # )
+      # beta_curr <- up$beta
+      # logpost_sample[m, 1+q+2*p+1] <- up$logpost
+      # acc[1+q+2*p+1] <- acc[1+q+2*p+1] + up$accepted
+      # acc_tmp[1+q+2*p+1] <- acc_tmp[1+q+2*p+1] + up$accepted
     }
     
     # Save updated beta after full update
     beta_sample[m, ] <- beta_curr
+    
+    
+    # --- Random intercept update ---
+    up_re <- update_re(
+      u = u_curr, sigma2_u = sigma2u_curr, id = id,
+      theta = theta_re,
+      X = X, y = y, freq = freq,
+      beta = beta_curr,
+      link = link, link_prime = link_prime, link_second = link_second,
+      k_post = k, k_deriv = k_deriv, c_post = c, c_deriv = c_deriv,
+      w = w,
+      hess_eps = hess_eps,
+      step = step)
+    
+    # Update current values for rand. eff.
+    u_curr <- up_re$u
+    sigma2u_curr <- up_re$sigma2_u
+    
+    # Save sampled values for rand. eff.
+    u_sample[m, ] <- u_curr
+    sigma2u_sample[m] <- sigma2u_curr
+    
+    # Save acceptance rates for rand. eff.
+    acc_re_u_tmp <- acc_re_u_tmp + up_re$acc_u
+    acc_re_u <- acc_re_u + up_re$acc_u
+    acc_re_sigma2u_tmp <- acc_re_sigma2u_tmp + up_re$acc_sigma
+    acc_re_sigma2u <- acc_re_sigma2u + up_re$acc_sigma
     
     
     # --- Update tau ---
@@ -508,20 +562,25 @@ MCMC_IWLS_bikes <- function(niter,
           "print clock time: ", clock_time, " | ",
           "last ", print_step, " iter time: ", diff_time_last, " mins | ", 
           "total exe time: ", diff_time_start, " mins \n",
-          "acc rate (last ", print_step, ") = ", paste(round(acc_tmp / print_step, 3), collapse = " "),
-          # " | acc rate = ", paste(round(acc / m, 3), collapse = " "),
+          "acc rate (last ", print_step, ") = ", paste(round(acc_tmp / print_step, 3), collapse = " "), "\n",
+          "acc rate re [quartiles] (last ", print_step, ") = ", paste(round(quantile(acc_re_u_tmp / print_step, probs = c(0, 0.25, 0.5, 0.75, 1)), 3), collapse = " "), "\n",
+          "acc rate re var (last ", print_step, ") = ", paste(round(acc_re_sigma2u_tmp / print_step, 3), collapse = " "), "\n",
           ifelse(verbose > 2, paste0(" | logpost = ", round(logpost_sample[m], 3)), ""),
           "\n\n\n",
           sep = "")
       time_last = now
       acc_tmp <- rep(0L, length(acc))
+      acc_re_u_tmp <- rep(0L, n_id)
+      acc_re_sigma2u_tmp <- 0L
     }
   }
   
   list(
     beta = beta_sample,
     tau = tau_sample,
-    acc_prop = acc / niter,
+    u = u_sample,
+    sigma2u = sigma2u_sample,
+    acc_prop = list(beta = acc / niter, re_u = acc_re_u / niter, re_sigma2u = acc_re_sigma2u / niter),
     logpost = logpost_sample,
     w = w
   )
