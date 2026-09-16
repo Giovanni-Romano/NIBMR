@@ -237,7 +237,7 @@ out_MCMC = MCMC_IWLS_bikes(niter = niter,
                            d = d,
                            # 1 per ogni binary (q), 1 per ogni linear (p), 1 per ogni non-linear spline group (p), 1 per spatial (1)
                            a_tau = c(rep(a_tau1, q+p), rep(a_tau2, p+1)),
-                           b_tau = c(rep(a_tau1, q+p), rep(a_tau2, p+1)),
+                           b_tau = c(rep(b_tau1, q+p), rep(b_tau2, p+1)),
                            theta_re = theta_SDP$root,
                            verbose = 2, K_fold = 5, print_step = 50,
                            step = 0.1,
