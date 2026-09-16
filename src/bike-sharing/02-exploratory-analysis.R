@@ -324,6 +324,8 @@ data_for_regression = unavail_time |>
   # Join population density
   left_join(voronoi_utm |> st_drop_geometry() |> select(station, population_density), by = "station") |>
   # Join spatial covariates: counts, density, closest distance
+  left_join(count_poi_wide |> select(station, food, supermarkets, offices, nightlife, parks, tourism) |> rename_with(~ paste0("count_", .x), -station), 
+            by = "station") |>
   left_join(dens_poi_wide |> select(station, food, supermarkets, offices, nightlife, parks, tourism) |> rename_with(~ paste0("density_", .x), -station), 
             by = "station") |>
   left_join(closest_poi_wide |> select(station, education, metro, train, tram, bus) |> rename_with(~ paste0("closest_", .x), -station), 

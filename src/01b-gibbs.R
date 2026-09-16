@@ -184,7 +184,7 @@ MCMC_IWLS_bikes <- function(niter,
                             X_dummy = NULL,
                             X_cont = NULL,
                             Z_cont = NULL,
-                            Z_spat = NULL,
+                            X_GMRF = NULL,
                             id,
                             y,
                             freq = NULL,
@@ -195,7 +195,7 @@ MCMC_IWLS_bikes <- function(niter,
                             d, # splines dimension for every continuous covariate
                             beta0,
                             a_tau, b_tau,
-                            theta_re,
+                            theta_re, theta_GMRF, K_GMRF,
                             debug = FALSE, verbose = 0, print_step = 1000,
                             hess_eps = 1e-3,
                             step = 1,
@@ -214,10 +214,10 @@ MCMC_IWLS_bikes <- function(niter,
   # number of continuous covariates
   p = ncol(X_cont)
   # number of spatial covariates
-  if (is.null(Z_spat)) {
+  if (is.null(X_GMRF)) {
     s = 0
   } else {
-    s = ncol(Z_spat)
+    s = ncol(X_GMRF)
   }
   n = length(y)
   
@@ -239,10 +239,10 @@ MCMC_IWLS_bikes <- function(niter,
   
   
   # Build design matrix X
-  X = cbind(1, X_dummy, X_cont, Z_cont, Z_spat)
+  X = cbind(1, X_dummy, X_cont, Z_cont, X_GMRF)
   # colnames(X) = c("Intercept", colnames(X_dummy), colnames(X_cont), 
   #                 c(sapply(1:p, function(j) paste0(colnames(X_cont)[j], "_DR", 1:d[j]))),
-  #                 paste0("spatial_DR", 1:ncol(Z_spat)))
+  #                 paste0("GMFR_", 1:ncol(X_GMRF)))
   
   # --- Estimate w ---
   w_num <- 1/2
@@ -271,7 +271,7 @@ MCMC_IWLS_bikes <- function(niter,
 
   mean_cv <- sum(CV) / sum(freq)
   w <- w_num / mean_cv
-  # w = 0.84
+  # w = 0.8
   end_Kfold <- Sys.time()
   diff_time_kfold = round(difftime(end_Kfold, start_Kfold, units = "mins"), 2)
   if (verbose > 0) cat("End CV. \t", "Exec. time: ", diff_time_kfold, " mins \n\n", sep = "")
@@ -288,8 +288,8 @@ MCMC_IWLS_bikes <- function(niter,
   #   "tau_spat")
   
   # --- Storage for random effects ---
-  # u_i ~ N(0, sigma_u^2)
-  # sigma_u ~ half-t with nu_re df, location 0 and scale A_re
+  # u_i ~ N(0, sigma2u)
+  # sigma2u ~ SDP
   id_fac <- match(id, unique(id))
   n_id <- max(id_fac)
   u_sample   <- matrix(NA_real_, nrow = niter, ncol = n_id)
@@ -315,18 +315,15 @@ MCMC_IWLS_bikes <- function(niter,
   
   # IG shape 
   IG_size_vec <- c(rep(1, q + p), d)
-  if (s > 0) IG_size_vec <- c(IG_size_vec, s)
-  
   
   # Initial values for parameter-expanded random effects
   sigma2u_curr <-rweibull(n = 1, shape = 1/2, scale = theta_re)
-  u_curr <- rnorm(n_id, mean = 0, sd = 1)
+  u_curr <- rnorm(n_id, mean = 0, sd = sqrt(sigma2u_curr))
   
   
   
   # ---  Storage for acceptance/rejection of MH
-  n_sp_up = floor(s / 5) + 1*(s %% 5 > 0)
-  acc <- rep(0L, 1+q+2*p+n_sp_up)
+  acc <- rep(0L, 1+q+2*p+1*(s>0))
   acc_tmp <- acc
   
   acc_re_u <- rep(0L, n_id)
@@ -453,59 +450,32 @@ MCMC_IWLS_bikes <- function(niter,
     }
     
     
-    ## --- Multi-blocks update for spatial effect ---
-    if (!is.null(Z_spat)) {
-      idx.e = 1 + q + p + sum(d)
+    ## --- Update for discrete spatial effect ---
+    if (!is.null(X_GMRF)) {
       
-      for (r in 1:n_sp_up){
-        
-        idx.b = idx.e + 1
-        idx.e = min(idx.b + 4, P)
-        idx = idx.b:idx.e
-        
-        up <- iwls_beta_update(
-          idx = idx,
-          beta_curr = beta_curr,
-          u_curr = u_curr[id_fac],
-          y = y, X = X, X2 = X2,
-          freq = freq,
-          link = link, link_prime = link_prime, link_second = link_second,
-          k_post = k, k_deriv = k_deriv,
-          c_post = c, c_deriv = c_deriv,
-          w = w,
-          tau = tau, tau_idx = tau_idx,
-          hess_eps = hess_eps,
-          step = step/4
-        )
-        beta_curr <- up$beta
-        logpost_sample[m, 1+q+2*p+r] <- up$logpost
-        acc[1+q+2*p+r] <- acc[1+q+2*p+r] + up$accepted
-        acc_tmp[1+q+2*p+r] <- acc_tmp[1+q+2*p+r] + up$accepted
-      }
+      idx.b = idx.e + 1
+      idx.e = idx.e + s
+      idx = idx.b:idx.e
       
-      # Single block update for spatial effects (acc. prob. too low)
-      # idx.b = idx.e + 1
-      # idx.e = idx.e + s
-      # idx = idx.b:idx.e
-      # 
-      # up <- iwls_beta_update(
-      #   idx = idx,
-      #   beta_curr = beta_curr,
-      #   u_curr = u_curr[id_fac],
-      #   y = y, X = X, X2 = X2,
-      #   freq = freq,
-      #   link = link, link_prime = link_prime, link_second = link_second,
-      #   k_post = k, k_deriv = k_deriv,
-      #   c_post = c, c_deriv = c_deriv, 
-      #   w = w,
-      #   tau = tau, tau_idx = tau_idx,
-      #   hess_eps = hess_eps,
-      #   step = step/4
-      # )
-      # beta_curr <- up$beta
-      # logpost_sample[m, 1+q+2*p+1] <- up$logpost
-      # acc[1+q+2*p+1] <- acc[1+q+2*p+1] + up$accepted
-      # acc_tmp[1+q+2*p+1] <- acc_tmp[1+q+2*p+1] + up$accepted
+      up <- iwls_beta_update(
+        idx = idx,
+        beta_curr = beta_curr,
+        u_curr = u_curr[id_fac],
+        y = y, X = X, X2 = X2,
+        freq = freq,
+        link = link, link_prime = link_prime, link_second = link_second,
+        k_post = k, k_deriv = k_deriv,
+        c_post = c, c_deriv = c_deriv,
+        w = w,
+        tau = tau, tau_idx = tau_idx,
+        hess_eps = hess_eps,
+        step = step/4
+      )
+      beta_curr <- up$beta
+      logpost_sample[m, 1+q+2*p+1] <- up$logpost
+      acc[1+q+2*p+1] <- acc[1+q+2*p+1] + up$accepted
+      acc_tmp[1+q+2*p+1] <- acc_tmp[1+q+2*p+1] + up$accepted
+      
     }
     
     # Save updated beta after full update
@@ -540,7 +510,7 @@ MCMC_IWLS_bikes <- function(niter,
     
     
     # --- Update tau ---
-    for (j in seq_len(q + 2*p + 1*(s>0))) {
+    for (j in seq_len(q + 2*p)) {
       beta_tmp <- beta_sample[m, 1 + which(tau_idx == j)]
       
       var_sample = 1 / rgamma(1,
@@ -548,10 +518,20 @@ MCMC_IWLS_bikes <- function(niter,
                               rate  = b_tau[j] + sum(beta_tmp^2) / 2
       )
       
-      tau_sample[m, j] <- sqrt(var_sample)
+      tau[j] <- sqrt(var_sample)
     }
     
-    tau <- tau_sample[m, ]
+    # ---- Update GMRF tau ----
+    if (!is.null(X_GMRF)) {
+      
+      out_SDP_GMRF = iwls_SDP_update(log_tau2 = log(tau[q + 2*p + 1]^2), 
+                                 K = diag(1, s), rank_K = s, 
+                                 beta = beta_curr[q + p + sum(d) + 1:s], theta = theta_GMRF)
+      var_GMRF = exp(out_SDP_GMRF$log_tau2)
+      tau[q + 2*p + 1] <- sqrt(var_GMRF)
+    }
+    
+    tau_sample[m, ] = tau
     
     if (verbose == 2 && (m %% print_step == 0)) {
       now = Sys.time()

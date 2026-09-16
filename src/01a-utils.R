@@ -551,13 +551,13 @@ iwls_SDP_update = function(log_tau2, K, rank_K, beta, theta, step = 1){
   log_q_prop_given_cur <- sum(dnorm(log_tau2_prop, mean = mu_c, sd = sqrt(Sigma_c), log = T))
   log_q_cur_given_prop <- sum(dnorm(log_tau2, mean = mu_p, sd = sqrt(Sigma_p), log = T))
   
-  # Check if it's the target ratio or the proposal ratio that brings acceptance to zero
-  if (as.numeric(get("verbose", envir = sys.frame(sys.parent(2)))) > 2){
-    if (get("m", envir = sys.frame(sys.parent(2))) %% get("print_step", envir = sys.frame(sys.parent(2))) == 0){
-      cat("SDP  |  Target diff:", round(prop$logpost - cur$logpost, 2), 
-          "| Proposal diff:", round(log_q_cur_given_prop - log_q_prop_given_cur, 2), "\n")
-    } 
-  }
+  # # Check if it's the target ratio or the proposal ratio that brings acceptance to zero
+  # if (as.numeric(get("verbose", envir = sys.frame(sys.parent(2)))) > 2){
+  #   if (get("m", envir = sys.frame(sys.parent(2))) %% get("print_step", envir = sys.frame(sys.parent(2))) == 0){
+  #     cat("SDP  |  Target diff:", round(prop$logpost - cur$logpost, 2), 
+  #         "| Proposal diff:", round(log_q_cur_given_prop - log_q_prop_given_cur, 2), "\n")
+  #   } 
+  # }
   
   log_alpha <- prop$logpost - cur$logpost +
     log_q_cur_given_prop - log_q_prop_given_cur

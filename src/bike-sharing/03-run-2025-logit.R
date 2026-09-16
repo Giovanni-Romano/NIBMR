@@ -15,7 +15,7 @@ nobikes2025 = data |> filter(year(commit_at) == 2025 & unavail_type == "no_bikes
 
 # Exclude stations close to Pero: 334, 500 and 501. Actually 500 does not have any observation in 2025.
 D = nobikes2025 |> filter(ID != 334, ID != 501) |> 
-  select(-commit_at, -Precipitation, -Temperature, -Rain)
+  select(-commit_at, -Precipitation, -Temperature, -Rain, -starts_with("count_"))
 
 
 # CREATE OBJECTS FOR REGRESSION ----
@@ -24,7 +24,7 @@ y = D$time_numeric_shifted / 100 / 720
 ## Binary covariates ----
 X_dummy = (D |> select(Weekend)  |> as.matrix())
 ## Continuous covariates ----
-X_cont = D |> select(population_density, starts_with("density_"), starts_with("closest_")) |> as.matrix()
+X_cont = D |> select(population_density, starts_with("density_"), starts_with("closest_")) |> as.matrix() |> log1p()
 X_cont.scaled = scale(X_cont)
 ## ID for rand. eff. ----
 id_re = as.integer(factor(D$station, levels = unique(D$station[order(D$ID)])))
@@ -42,40 +42,111 @@ for (j in 1:p){
 }
 Z_cont = do.call(cbind, lapply(splines_list, function(x) x$Z))
 colnames(Z_cont) = c(sapply(1:p, function(j) paste0(colnames(X_cont)[j], "_DR", 1:d[j])))
+
 ## Spatial component ----
 X_spat = D |> select(station, longitude, latitude)
-# I build the tensor-product splines on the unique values of the coordinates, 
-# then I match the rows of the design matrix with the original data
 X_spat_unique = X_spat |> distinct()
-coord_utm = sf::st_as_sf(X_spat_unique, 
-                         coords = c("longitude", "latitude"), crs = 4326) |> 
-  sf::st_transform(crs = 32632) |> 
-  sf::st_coordinates()
 
-# # Option 1: Normalize with observed observed min and max x and y coordinates
-coord_scaled = apply(coord_utm, 2, function(x) (x - min(x)) /  (max(x) - min(x)))
+library(sf)
+# nil = st_read("data/bike-sharing/milan_NIL.geojson")
+# nil = st_transform(nil, crs = 4326)
+munic = st_read("data/bike-sharing/milan_munic.geojson")
+munic = st_transform(munic, crs = 4326)
+X_spat_unique_sf = st_as_sf(X_spat_unique, 
+                            coords = c("longitude", "latitude"), crs = 4326) |> 
+  # st_join(nil["ID_NIL"])
+  st_join(munic["MUNICIPIO"])
 
-# # Option 2: Normalize with Milan min and max x and y coordinates
-# library(sf)
-# milano <- st_read("https://dati.comune.milano.it/dataset/e75d91fa-eca6-4ee5-b96e-08bcdbb8d6f0/resource/f56cb432-83e6-48de-ae30-d39b4be61e85/download/confine_comune_milano_layer_0_confine_comune_milano.geojson")
-# milano_utm <- st_transform(milano, crs = 32632)
-# milano_coords <- st_coordinates(milano_utm)
-# min_x_milano = min(milano_coords[, 1]); max_x_milano = max(milano_coords[, 1])
-# min_y_milano = min(milano_coords[, 2]); max_y_milano = max(milano_coords[, 2])
-# coord_scaled = coord_utm
-# coord_scaled[ , 1] = (coord_utm[ , 1] - min_x_milano) / (max_x_milano - min_x_milano)
-# coord_scaled[ , 2] = (coord_utm[ , 2] - min_y_milano) / (max_y_milano - min_y_milano)
+Z_spat_unique = data.frame(station = X_spat_unique_sf$station, 
+                           model.matrix(~ factor(X_spat_unique_sf$MUNICIPIO, levels = 1:9) - 1))
+# model.matrix(~ factor(X_spat_unique_sf$ID_NIL, levels = 1:88) - 1))
+colnames(Z_spat_unique)[-1] = paste("MUN", 1:9, sep = "_")
+# colnames(Z_spat_unique)[-1] = paste("NIL", 1:88, sep = "_")
 
-out_spatial_DR = construct_DR_Spatial(coord_scaled[ , 1], coord_scaled[ , 2], k1 = 5, k2 = 5)
-Z_spat_unique = bind_cols(station = X_spat_unique$station, 
-                          out_spatial_DR$Z)
-colnames(Z_spat_unique) = c("station", paste0("spatial_DR", 1:ncol(out_spatial_DR$Z)))
-s = ncol(Z_spat_unique)-1
+# # Just a check (apparently only 44 of the 88 NILs are represented in the data)
+# sum(colSums(Z_spat_unique[ , -1]) > 0)
+# length(unique(X_spat_unique_sf$ID_NIL))
+# # Check that actually only half of the NILs are represented in the data
+# csnil = data.frame(ID_NIL = 1:88, count = colSums(Z_spat_unique[ , -1]))
+# nil_counts = left_join(nil, csnil, by = "ID_NIL") |> select(ID_NIL, count)
+# plot(nil_counts[ , "count"], breaks = c(-0.5, 0.5, 100), main = "Counts of stations per NIL")
+
+# Just a check
+sum(colSums(Z_spat_unique[ , -1]) > 0)
+length(unique(X_spat_unique_sf$MUNICIPIO))
+# Check nmbr of stations per Municipio
+csmun = data.frame(MUN = 1:9, count = colSums(Z_spat_unique[ , -1]))
+munic_counts = left_join(munic, csmun, by = c("MUNICIPIO" = "MUN")) |> select(MUNICIPIO, count)
+plot(munic_counts[ , "count"], main = "Counts of stations per Municipio")
+munic_counts
+
+
+
+# Neighbors sharing a boundary
+nb <- spdep::poly2nb(munic)
+# Binary adjacency matrix
+W <- spdep::nb2mat(nb, style = "B", zero.policy = TRUE)
+# Adjacency/penalty matrix K
+diagK_GMRF <- diag(rowSums(W))
+K_GMRF <- diagK_GMRF - W
+
+MMR_K_GMFR = function(K){
+  
+  ee <- eigen(K, symmetric = TRUE)
+  tol <- 1e-10 * max(ee$values)
+  
+  keep_pen <- ee$values > tol
+  keep_null <- !keep_pen
+  
+  lambda <- ee$values[keep_pen]
+  
+  Gamma_pen  <- ee$vectors[, keep_pen,  drop = FALSE]
+  Gamma_null <- ee$vectors[, keep_null, drop = FALSE]
+  
+  k <- sum(keep_pen)
+  q <- sum(keep_null)
+  
+  cat("Number of positive eigenvalues (k):", k, " | Number of zero eigenvalues (q):", q, "\n")
+  
+  U_tilde <- Gamma_null
+  
+  Omega = diag(sqrt(lambda))
+  
+  L = Gamma_pen %*% Omega
+  V_tilde = L %*% solve(crossprod(L))
+  
+  if (!(all(round(crossprod(V_tilde, K %*% V_tilde), 2) == diag(1, k)))){
+    warning("V_tilde' K V_tilde is not diag(1, k)")
+  }
+  
+  if (!(all(round(crossprod(U_tilde, K %*% U_tilde), 2) == diag(0, q)))){
+    warning("U_tilde' K U_tilde is not diag(0, q)")
+  }
+  
+  Omega_minus = diag(0, k, k)
+  dOmega = diag(Omega)
+  diag(Omega_minus)[dOmega > 0 ] = 1 / dOmega[dOmega > 0 ]
+  
+  K_minus = Gamma_pen %*% Omega_minus %*% t(Gamma_pen)
+  
+  list(V_tilde = V_tilde, U_tilde = U_tilde, K_minus = K_minus, k = k, q = q)
+}
+
+MMR_out = MMR_K_GMFR(K_GMRF)
+s = MMR_out$k
+
+U_GMRF =  data.frame(station = Z_spat_unique$station,
+                     as.matrix(Z_spat_unique[ , -1]) %*% MMR_out$U_tilde)
+colnames(U_GMRF)[-1] = paste0("UGMRF_", 1:MMR_out$q)
+
+V_GMRF = data.frame(station = Z_spat_unique$station,
+                    as.matrix(Z_spat_unique[ , -1]) %*% MMR_out$V_tilde)
+colnames(V_GMRF)[-1] = paste0("VGMRF_", 1:MMR_out$k)
 
 
 data_for_regression = bind_cols(station = D$station, id_re = id_re, y = y, 
                                 X_dummy, X_cont.scaled, Z_cont) |> 
-  left_join(Z_spat_unique, by = "station")
+  left_join(V_GMRF, by = "station")
 
 
 # GROUPED_DATA
@@ -89,13 +160,13 @@ id_re_grouped = data_for_regression_grouped$id_re
 X_dummy_grouped = data_for_regression_grouped |> select(all_of(colnames(X_dummy))) |> as.matrix()
 X_cont.scaled_grouped = data_for_regression_grouped |> select(all_of(colnames(X_cont.scaled))) |> as.matrix()
 Z_cont_grouped = data_for_regression_grouped |> select(all_of(colnames(Z_cont))) |> as.matrix()
-Z_spat_grouped = data_for_regression_grouped |> select(all_of(colnames(Z_spat_unique)[-1])) |> as.matrix()
+V_GMRF_grouped = data_for_regression_grouped |> select(all_of(colnames(V_GMRF)[-1])) |> as.matrix()
 freq_grouped = data_for_regression_grouped$freq
 
 
 # Checks
 sum(freq_grouped) == n
-ncol(X_dummy_grouped) == q; ncol(X_cont.scaled_grouped) == p; ncol(Z_cont_grouped) == sum(d); ncol(Z_spat_grouped) == s
+ncol(X_dummy_grouped) == q; ncol(X_cont.scaled_grouped) == p; ncol(Z_cont_grouped) == sum(d); ncol(V_GMRF_grouped) == (ncol(V_GMRF) - 1)
 
 
 df = data_for_regression_grouped |> select(-station, -freq) |> as.data.frame()
@@ -105,16 +176,8 @@ X_complete_grouped = cbind("Intercept" = 1, df |> select(-y) |> as.matrix())
 
 qr_reg = lqmm::lqmm(fixed = as.formula(paste("qlogis(y) ~ ", paste(colnames(df)[-(1:2)], collapse= "+"))), 
                     random = ~ 1, group = id_re, tau = 0.5, 
-                    data = df, weights = freq_grouped)
-
-# qr_reg = quantreg::rq(y ~ .,
-#                       data = df,
-#                       weights = freq_grouped,
-#                       tau = 0.5)
-# res_qr = qr_reg$residuals
-# beta_qr = qr_reg$coefficients; names(beta_qr) = colnames(X_complete_grouped)
-# unique_fit_qr = drop(X_complete_unique %*% beta_qr)
-
+                    data = df, weights = freq_grouped,
+                    control = list(LP_max_iter = 1e3))
 
 X_complete_unique = unique(X_complete_grouped)
 
@@ -142,7 +205,8 @@ names(unique_fit_qr) = labs_unique
 #   hist(y[names(y) == name], breaks = seq(-1/160, 1+1/160, by = 1/80),
 #        main = name, lty = "blank", freq = F)
 #   abline(v = unique_fit_qr[name], col = "purple", lwd = 2)
-#   abline(v = median(y_grouped[names(y_grouped) == name]), col = "green3", lty = 2, lwd = 2)
+#   abline(v = median(rep(y_grouped[names(y_grouped) == name], freq_grouped[names(y_grouped) == name])), 
+#          col = "green3", lty = 2, lwd = 2)
 # }
 
 
@@ -166,12 +230,12 @@ k_multi = c(
 #   c("Nelder-Mead", "CG", "L-BFGS-B", "SANN"),
 #   # c("Nelder-Mead", "BFGS", "CG", "L-BFGS-B", "SANN"),
 #   function(m){
-#     est = optim(par = qr_reg$coefficients,
+#     est = optim(par = beta_qr,
 #                 fn = function(b){
-#                   predictor_unique = logit_link(X_complete_grouped%*%b)
-#                   sum(freq_grouped * 
-#                         loss_asymm(y_grouped - predictor_unique, 
-#                                    k_multi, 
+#                   predictor_unique = logit_link(X_complete_grouped[ , -2]%*%b)
+#                   sum(freq_grouped *
+#                         loss_asymm(y_grouped - predictor_unique,
+#                                    k_multi,
 #                                    1e-1))
 #                 }, method = m)$par
 #     est
@@ -179,10 +243,10 @@ k_multi = c(
 # )
 # 
 # which.min(apply(out_optim_scaled, 2, function(b){
-#   predictor_unique = logit_link(X_complete_grouped%*%b)
-#   sum(freq_grouped * 
-#         loss_asymm(y_grouped - predictor_unique, 
-#                    k_multi, 
+#   predictor_unique = logit_link(X_complete_grouped[ , -2]%*%b)
+#   sum(freq_grouped *
+#         loss_asymm(y_grouped - predictor_unique,
+#                    k_multi,
 #                    1e-1))
 # }))
 # b_init = out_optim_scaled[ , "L-BFGS-B"]
@@ -190,32 +254,40 @@ k_multi = c(
 b_init = optim(par = beta_qr,
                fn = function(b){
                  predictor_unique = logit_link(X_complete_grouped[ , -2]%*%b)
-                 sum(freq_grouped * 
-                       loss_asymm(y_grouped - predictor_unique, 
-                                  k_multi, 
+                 sum(freq_grouped *
+                       loss_asymm(y_grouped - predictor_unique,
+                                  k_multi,
                                   1e-1))
                }, method = "L-BFGS-B")$par
 
 unique_fit_init = logit_link(drop(X_complete_unique[ , -2] %*% b_init))
 names(unique_fit_init) = labs_unique
-# par(mfrow = c(3, 4), ask = T)
-# for (name in unique(labs_grouped)){
-#   hist(y[names(y) == name],
-#        breaks = seq(-1/160, 1+1/160, by = 1/80),
-#        main = name, lty = "blank")
-#   abline(v = unique_fit_init[name], col = "red", lwd = 2)
-#   abline(v = unique_fit_qr[name], col = "purple", lwd = 2)
-#   abline(v = names(which.max(table(y[names(y) == name]))),
-#          col = "green")
-# }
+par(mfrow = c(3, 4), ask = T)
+for (name in unique(labs_grouped)){
+  hist(y[names(y) == name],
+       breaks = seq(-1/160, 1+1/160, by = 1/80),
+       main = name, lty = "blank")
+  abline(v = unique_fit_init[name], col = "red", lwd = 2)
+  abline(v = unique_fit_qr[name], col = "purple", lwd = 2)
+  abline(v = names(which.max(table(y[names(y) == name]))),
+         col = "green")
+}
 
 
 # Find theta value for SDP for rand. eff.
 library(sdPrior)
-Z_th = diag(1, max(id_re))
-Kinv_th = diag(1, ncol(Z_th))
-theta_SDP = get_theta(Z = Z_th, Kinv = Kinv_th)
+Z_th_re = diag(1, max(id_re))
+Kinv_th_re = diag(1, ncol(Z_th_re))
+# theta_SDP_re = get_theta(Z = Z_th_re, Kinv = Kinv_th_re)
+# # saveRDS(theta_SDP_re, "application/bike-sharing/rds_mcmc/theta_SDP_re_logX.RDS")
+theta_SDP_re = readRDS("application/bike-sharing/rds_mcmc/theta_SDP_re.RDS")
 
+# Find theta value for SDP for GMRF for discrete spatial effect
+Z_th_GMRF = as.matrix(Z_spat_unique[ , -1])
+Kinv_th_GMRF = MMR_out$K_minus
+# theta_SDP_GMRF = get_theta(Z = Z_th_GMRF, Kinv = Kinv_th_GMRF)
+# saveRDS(theta_SDP_GMRF, "application/bike-sharing/rds_mcmc/theta_SDP_GMRF_logX.RDS")
+theta_SDP_GMRF = readRDS("application/bike-sharing/rds_mcmc/theta_SDP_GMRF.RDS")
 
 a_tau1 = 2.1; a_tau2 = 1e-3
 b_tau1 = qgamma(0.001, shape = 2.1, rate = 1) * 5^2; b_tau2 = 1e-3
@@ -223,11 +295,11 @@ b_tau1 = qgamma(0.001, shape = 2.1, rate = 1) * 5^2; b_tau2 = 1e-3
 k_post = k_multi; k_prop = (k_multi)^(4/5)
 c_post = 1e-1; c_prop = 1e-1
 
-niter = 20e3
+niter = 15e3
 out_MCMC = MCMC_IWLS_bikes(niter = niter,
                            X_dummy = X_dummy_grouped, 
                            X_cont = X_cont.scaled_grouped, Z_cont = Z_cont_grouped,
-                           Z_spat = Z_spat_grouped,
+                           X_GMRF = V_GMRF_grouped,
                            id = id_re_grouped,
                            y = y_grouped, 
                            freq = freq_grouped,
@@ -238,12 +310,13 @@ out_MCMC = MCMC_IWLS_bikes(niter = niter,
                            # 1 per ogni binary (q), 1 per ogni linear (p), 1 per ogni non-linear spline group (p), 1 per spatial (1)
                            a_tau = c(rep(a_tau1, q+p), rep(a_tau2, p+1)),
                            b_tau = c(rep(a_tau1, q+p), rep(a_tau2, p+1)),
-                           theta_re = theta_SDP$root,
-                           verbose = 2, K_fold = 5, print_step = 50,
+                           theta_re = theta_SDP_re$root,
+                           theta_GMRF = theta_SDP_GMRF$root,
+                           verbose = 2, K_fold = 5, print_step = 500,
                            step = 0.1,
                            beta0 = b_init,
-                           seed = 1708)
-saveRDS(out_MCMC, "application/bike-sharing/rds_mcmc/out_MCMC_SpatCont_RandEff.RDS")
+                           seed = 1509)
+saveRDS(out_MCMC, "application/bike-sharing/rds_mcmc/out_MCMC_SpatMunic_RandEff.RDS")
 # out_MCMC = readRDS("application/bike-sharing/rds_mcmc/out_MCMC_spatial_logit_norain_blockspatial.RDS")
 
 
@@ -252,11 +325,11 @@ update_idx <- c(1,
                 if (q > 0) 2:(q+1) else integer(0),
                 if (p > 0) (q + 2):(q + 1 + p) else integer(0),
                 if (p > 0) q + 1 + p + rep(seq_len(p), d) else integer(0),
-                if (s > 0) q+1+p+p + c(rep(1:(floor(s / 5)), each = 5), rep(floor(s / 5)+(s %% 5 > 0), s %% 5)) else integer(0)
+                if (s > 0) q+1+p+p+rep(1, s) else integer(0)
 )
 
 
-IMG_FOLD = "application/bike-sharing/pics/results/SpatCont_RandEff/"
+IMG_FOLD = "application/bike-sharing/pics/results/SpatMunic_RandEff_LogX/"
 
 pdf(paste0(IMG_FOLD, "traceplot_spatial_logit.pdf"), width = 11, height = 7)
 par(mfrow =c(5, 5), mar = c(3, 3, 1, 1))
@@ -439,54 +512,19 @@ dev.off()
 
 
 # Spatial effect ----
-## Paul's plot
-require(sf)
-milano <- st_read("https://dati.comune.milano.it/dataset/e75d91fa-eca6-4ee5-b96e-08bcdbb8d6f0/resource/f56cb432-83e6-48de-ae30-d39b4be61e85/download/confine_comune_milano_layer_0_confine_comune_milano.geojson")
-milano_utm <- st_transform(milano, crs = 32632)
-milano_coords <- st_coordinates(milano_utm)
-xmin = min(coord_utm[ , 1]); xmax = max(coord_utm[ , 1])
-ymin = min(coord_utm[ , 2]); ymax = max(coord_utm[ , 2])
-milano_coords_scaled = milano_coords
-milano_coords_scaled[, 1] <- (milano_coords[, 1] - xmin) / (xmax - xmin)
-milano_coords_scaled[, 2] <- (milano_coords[, 2] - ymin) / (ymax - ymin)
+munic_eff = munic[ , "MUNICIPIO"] |> arrange(MUNICIPIO)
+munic_eff$est = (diag(1, MMR_out$k + 1) %*% MMR_out$V_tilde) %*% est[paste0("VGMRF_", 1:MMR_out$k)]
 
-pdf(paste0(IMG_FOLD, "spatial_effect_Paul_noconvex_logit.pdf"), width = 11, height = 7)
-plot_effect_spat(coord_scaled, est[75:98], out_spatial_DR$Trafo,
-                 knots1 = out_spatial_DR$knots1, knots2 = out_spatial_DR$knots2,
-                 xlim = c(-1, 1.5), ylim = c(-0.75, 1.25), convex_hull = F)
-lines(x = c(0, 1, 1, 0, 0), y = c(0, 0, 1, 1, 0), col = "grey", lwd = 2) # Add square [0, 1] x [0, 1]
-lines(milano_coords_scaled)
-dev.off()
+par(mfrow = c(1, 1))
+ggplot(munic_eff) +
+  geom_sf(aes(fill = est)) +
+  scale_fill_gradient2(
+    low = "#4575b4", mid = "#f7f7f7", high = "#d73027", 
+    midpoint = 0) +
+  geom_point()
+labs(title = "Estimated spatial effect by Municipio", fill = "Estimate") +
+  theme_bw() + 
+  theme(panel.grid = element_blank())
 
-pdf(paste0(IMG_FOLD, "spatial_effect_Paul_convex_logit.pdf"), width = 11, height = 7)
-plot_effect_spat(coord_scaled, est[75:98], out_spatial_DR$Trafo, ngrid = 100,
-                 knots1 = out_spatial_DR$knots1, knots2 = out_spatial_DR$knots2,
-                 xlim = c(-1, 1.5), ylim = c(-0.75, 1.25), convex_hull = T)
-lines(x = c(0, 1, 1, 0, 0), y = c(0, 0, 1, 1, 0), col = "grey", lwd = 2) # Add square [0, 1] x [0, 1]
-lines(milano_coords_scaled)
-dev.off()
-
-pdf(paste0(IMG_FOLD, "spatial_effect_Paul_concave_logit.pdf"), width = 11, height = 7)
-plot_effect_spat(coord_scaled, est[75:98], out_spatial_DR$Trafo, ngrid = 100,
-                 knots1 = out_spatial_DR$knots1, knots2 = out_spatial_DR$knots2,
-                 xlim = c(-1, 1.5), ylim = c(-0.75, 1.25), concave_hull = T)
-lines(x = c(0, 1, 1, 0, 0), y = c(0, 0, 1, 1, 0), col = "grey", lwd = 2) # Add square [0, 1] x [0, 1]
-lines(milano_coords_scaled)
-dev.off()
-
-## My plot ----
-MCMC_fit_spatial = drop(as.matrix(Z_spat_unique[ , -1])) %*% t(out_MCMC$beta[-(1:burnin), 75:98])
-pred_spat = data.frame(x = coord_scaled[ , 1], y = coord_scaled[ , 2],
-                       spat_eff = drop(as.matrix(Z_spat_unique[ , -1]) %*% est[75:98]),
-                       q025 = apply(MCMC_fit_spatial, 1, quantile, 0.025),
-                       q975 = apply(MCMC_fit_spatial, 1, quantile, 0.975))
-pred_spat |> 
-  ggplot() +
-  geom_point(aes(x = x, y = y, fill = spat_eff), size = 2, pch = 21, color = "grey") + 
-  scale_fill_gradient2(low = "#4575b4", mid = "#f7f7f7", high = "#d73027", midpoint = 0) +
-  geom_path(data = milano_coords_scaled, aes(x = X, y = Y), color = "black", lwd = 0.3)
-
-ggsave(filename = "spatial_effect_my_logit.pdf",
-       path = IMG_FOLD,
-       width = 11, height = 7)
-
+plot(munic_eff["est"], col = viridis::viridis(n = 9)[cut(munic_eff$est, breaks = 9)],
+     main = "Estimated spatial effect by Municipio", axes = T)
