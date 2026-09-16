@@ -320,7 +320,7 @@ MCMC_IWLS_bikes <- function(niter,
   
   # Initial values for parameter-expanded random effects
   sigma2u_curr <-rweibull(n = 1, shape = 1/2, scale = theta_re)
-  u_curr <- rnorm(n_id, mean = 0, sd = 1)
+  u_curr <- rnorm(n_id, mean = 0, sd = sqrt(sigma2u_curr))
   
   
   
