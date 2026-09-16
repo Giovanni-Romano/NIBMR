@@ -15,7 +15,7 @@ nobikes2025 = data |> filter(year(commit_at) == 2025 & unavail_type == "no_bikes
 
 # Exclude stations close to Pero: 334, 500 and 501. Actually 500 does not have any observation in 2025.
 D = nobikes2025 |> filter(ID != 334, ID != 501) |> 
-  select(-commit_at, -Precipitation, -Temperature, -Rain)
+  select(-commit_at, -Precipitation, -Temperature, -Rain, -starts_with("count_"))
 
 
 # CREATE OBJECTS FOR REGRESSION ----
