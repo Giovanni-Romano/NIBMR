@@ -74,6 +74,12 @@ construct_DR_basis <- function(x, d = 10, rescale = TRUE, type_of_splines = "ps"
   K=fit[[1]]$S[[1]]
   
   # set up constraint matrix
+  # Orthogonality is enforced against both the intercept (column of 1s) and the
+  # linear term. We use scale(x) (centred AND scaled), but this spans the same
+  # 2D subspace as centred x: scale(x) = c0*1 + c1*(x - mean(x)), so the
+  # nullspace of (1, scale(x))^T B is identical to that of (1, x-centred)^T B
+  # and to that of original x, so (1, x)^T B.
+  # The resulting DR basis Z is hence orthogonal to any linear/intercept effect.
   C <- t(cbind(1, scale(x))) %*% B
   V0 <- svd(C,nv=d+2)$v[, 3:(d+2), drop = FALSE]
   
@@ -155,6 +161,12 @@ construct_DR_Spatial<-function(x1, x2, k1 = 10, k2 = 10, normalize_cols = FALSE)
   G=crossprod(B)/n
   
   C=t(rep(1,n))%*%B
+  # NOTE: in the spatial extension we only enforce orthogonality against the
+  # intercept (span of 1) and deliberately NOT against any linear term: the
+  # spatial effect is defined as purely smooth/nonlinear and no linear spatial
+  # covariate is included in the predictor, so orthogonality to a (meaningless)
+  # linear term is not required.
+
   
   V0=svd(C,nv=k1*k2)$v[,2:(k1*k2)]
   

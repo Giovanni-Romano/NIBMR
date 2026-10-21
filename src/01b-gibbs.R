@@ -22,7 +22,23 @@ MCMC_IWLS <- function(niter,
   
   
   # --- Estimate w ---
-  w_num <- 1/2
+  # Generalized Bayes (Bissiri, Holmes & Walker 2016, JRSSB).
+  # Unit-information-loss criterion (UILC): set w so ONE observation
+  # carries the same "information" as the unit-information prior.
+  #
+  # Closed-form UILC numerator (see BMR_NIL notes, Section on w/ UILC):
+  #   w_num = E_beta[ log pi(beta.hat^prior) / pi(beta) ]
+  #         = (number of informative coefficients) / 2.
+  # Each independent Gaussian N(0, tau_j^2) coefficient contributes
+  # E[ beta_j^2 / (2 tau_j^2) ] = 1/2 to this expectation; the flat
+  # intercept prior contribution cancels (intercept has no prior).
+  #
+  # For this sampler the informative coefficients are the p linear slope
+  # coefficients plus the sum(d) nonlinear DR-basis coefficients, so
+  #   w_num = (p + sum(d)) / 2.
+  # Equivalently w_num = (P - 1) / 2, since P = 1 + p + sum(d) counts exactly
+  # one flat intercept plus those informative coefficients.
+  w_num <- (p + sum(d)) / 2
   if (!is.null(seed)) {set.seed(seed)}
   
   K <- K_fold
@@ -245,7 +261,12 @@ MCMC_IWLS_bikes <- function(niter,
   #                 paste0("spatial_DR", 1:ncol(Z_spat)))
   
   # --- Estimate w ---
-  w_num <- 1/2
+  # Same UILC as in MCMC_IWLS (see comment there): the closed-form numerator
+  # equals the number of informative (Gaussian-prior) coefficients divided by 2.
+  # Here the informative coefficients are q binary + p linear + sum(d) nonlinear
+  # DR-basis + s spatial coefficients (all have Gaussian priors; only the flat
+  # intercept beta0 has no prior), so w_num = (q + p + sum(d) + s) / 2.
+  w_num <- (P - 1) / 2
   if (!is.null(seed)) {set.seed(seed)}
   
   start_Kfold <- Sys.time()
@@ -271,7 +292,6 @@ MCMC_IWLS_bikes <- function(niter,
 
   mean_cv <- sum(CV) / sum(freq)
   w <- w_num / mean_cv
-  # w = 0.84
   end_Kfold <- Sys.time()
   diff_time_kfold = round(difftime(end_Kfold, start_Kfold, units = "mins"), 2)
   if (verbose > 0) cat("End CV. \t", "Exec. time: ", diff_time_kfold, " mins \n\n", sep = "")
