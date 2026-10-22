@@ -1,4 +1,53 @@
 # MCMC SAMPLER ----
+#' MCMC sampler (IWLS proposals) for mode regression on a single additive
+#' predictor, without random effects.
+#'
+#' Runs the Gibbs-within-Gibbs sampler of the notes for the model that has no
+#' random effects (used e.g. by the simulation study scripts). At each iteration
+#' it (i) updates the intercept and each coefficient block (one linear plus one
+#' DR-nonlinear block per continuous covariate) with iwls_beta_update, (ii)
+#' samples the block-specific variances tau_j^2 from their inverse-Gamma
+#' full conditionals (conjugate inverse-gamma with shape a_tau[j]+size/2 and
+#' rate b_tau[j]+sum(beta_tmp^2)/2), and (iii) stores the draws.
+#'
+#' The generalized-Bayes weight `w` is estimated by K-fold cross-validation of
+#' the empirical loss: with the unit-information-loss criterion (UILC) the
+#' numerator is the number of informative (prior-tasked) coefficients divided
+#' by 2, i.e. w_num = (p + sum(d))/2 = (P - 1)/2, divided by the average
+#' out-of-sample loss (see the BMR_NIL notes, UILC section).
+#'
+#' @param niter Integer, number of MCMC iterations.
+#' @param X Numeric design matrix Phi = (1, x, Z), n x P with P = 1 + p + sum(d).
+#' @param y Numeric response vector of length n.
+#' @param k Flatness parameter k_ni of the nested interval loss for the posterior
+#'   (target) distribution. Passed as the `k_post` argument of iwls_beta_update.
+#' @param k_deriv Flatness parameter used only for the smoother proposal loss
+#'   (gradient/Hessian), passed to iwls_beta_update.
+#' @param c Differentiability parameter c_n of the nested interval loss for the
+#'   posterior (target) distribution. Passed as the `c_post` argument.
+#' @param c_deriv Differentiability parameter used only for the smoother proposal
+#'   loss, passed to iwls_beta_update.
+#' @param p Number of continuous covariates (linear + nonlinear DR blocks).
+#' @param d Integer vector of length p with the DR dimension per covariate
+#'   (number of nonlinear basis functions per smooth).
+#' @param beta0 Numeric vector of length P with starting values for beta.
+#' @param a_tau Numeric vector (length 2*p) of inverse-gamma shape parameters
+#'   for the block variances.
+#' @param b_tau Numeric vector (length 2*p) of inverse-gamma rate parameters.
+#' @param debug Logical, reserved for extra diagnostics (currently unused).
+#' @param verbose Integer verbosity level: 0 quiet, 1 progress by 10% steps,
+#'   2 per-`print_step` summaries.
+#' @param print_step Number of iterations between verbose progress reports.
+#' @param hess_eps Small positive constant used by make_negdef (default 1e-3).
+#' @param K_fold Number of folds for the CV estimate of `w` (default 50).
+#' @param seed Optional RNG seed for reproducibility of the CV folds.
+#'
+#' @return A list with
+#'   \item{beta}{niter x P matrix of sampled coefficients (named columns).}
+#'   \item{tau}{niter x (2*p) matrix of sampled block standard deviations.}
+#'   \item{acc_prop}{Vector of per-block acceptance rates.}
+#'   \item{logpost}{niter x (1+p) matrix of log-full-conditionals per update.}
+#'   \item{w}{The estimated generalized-Bayes weight.}
 MCMC_IWLS <- function(niter,
                       X, y, 
                       k, k_deriv, c, c_deriv,
@@ -196,6 +245,76 @@ MCMC_IWLS <- function(niter,
 
 
 # MCMC SAMPLER BIKES APPLICATION ----
+#' MCMC sampler (IWLS proposals) for the bikes application: additive mode
+#' regression with binary, continuous (linear + DR-nonlinear) and spatial terms
+#' plus random intercepts.
+#'
+#' Runs the full Gibbs-within-Gibbs sampler used by the application on the bikes
+#' data. The linear predictor is
+#'   eta = beta0 + X_dummy beta_d + X_cont beta_l + Z_cont beta_nl + Z_spat beta_s + u_id,
+#' with u_i ~ N(0, sigma2_u) a random intercept per group and sigma2_u updated
+#' under the Scale-Dependent Prior (see update_re / iwls_SDP_update). At each
+#' iteration the sampler (i) IWLS-updates the intercept, each binary/linear block
+#' and each DR-nonlinear block, plus the spatial coefficients in blocks of five
+#' (with step/4, to lift the otherwise too-low acceptance), (ii) sweeps the random
+#' intercepts and sigma2_u, (iii) samples the block variances from their
+#' inverse-Gamma full conditionals, and (iv) stores the draws. The
+#' generalized-Bayes weight `w` is again set by K-fold cross-validation with the
+#' UILC numerator w_num = (P-1)/2 (P = 1 + q + p + sum(d) + s).
+#'
+#' @param niter Integer, number of MCMC iterations.
+#' @param X_dummy Numeric design matrix of binary/indicator covariates (n x q);
+#'   may be NULL if there are none.
+#' @param X_cont Numeric design matrix of continuous covariates (n x p), one
+#'   column per linear effect.
+#' @param Z_cont List or matrix of DR bases for the nonlinear continuous effects
+#'   (the columns are appended to X as one block per covariate).
+#' @param Z_spat Numeric matrix of DR spatial basis functions (n x s); NULL if
+#'   no spatial term.
+#' @param id Group index vector of length n mapping each observation to a
+#'   random-intercept group.
+#' @param y Numeric response vector of length n.
+#' @param freq Numeric vector of observation weights (default all 1).
+#' @param link Link function mu = link(eta) (default identity).
+#' @param link_prime First derivative of the link.
+#' @param link_second Second derivative of the link.
+#' @param k Flatness parameter k_ni of the nested interval loss for the posterior
+#'   (target) distribution; passed as `k_post`.
+#' @param k_deriv Flatness parameter of the smoother proposal loss (gradient/
+#'   Hessian); passed as `k_deriv`.
+#' @param c Differentiability parameter c_n of the nested interval loss for the
+#'   posterior (target) distribution; passed as `c_post`.
+#' @param c_deriv Differentiability parameter of the smoother proposal loss;
+#'   passed as `c_deriv`.
+#' @param d Integer vector of length p with the DR dimension per continuous
+#'   covariate (nonlinear basis functions per smooth).
+#' @param beta0 Numeric vector of length P = 1 + q + p + sum(d) + s of starting
+#'   values for beta.
+#' @param a_tau Numeric vector (length q + 2*p + s) of inverse-gamma shape
+#'   parameters for the block variances.
+#' @param b_tau Numeric vector (length q + 2*p + s) of inverse-gamma rate
+#'   parameters for the block variances.
+#' @param theta_re Score of the SDP prior placed on the random-effects variance
+#'   sigma2_u (scale of the prior).
+#' @param debug Logical, reserved for extra diagnostics (currently unused).
+#' @param verbose Integer verbosity level: 0 quiet, 1 progress by 10% steps,
+#'   2 (or more) detailed per-`print_step` summaries.
+#' @param print_step Number of iterations between verbose progress reports.
+#' @param hess_eps Small positive constant used by make_negdef (default 1e-3).
+#' @param step Scale multiplying the gradient in the IWLS proposal mean.
+#' @param K_fold Number of folds for the CV estimate of `w` (default 50).
+#' @param seed Optional RNG seed for reproducibility of the CV folds.
+#'
+#' @return A list with
+#'   \item{beta}{niter x P matrix of sampled coefficients (named as in X).}
+#'   \item{tau}{niter x (q + 2*p + s) matrix of sampled block standard deviations.}
+#'   \item{u}{niter x n_id matrix of sampled random intercepts.}
+#'   \item{sigma2u}{Vector (length niter) of sampled random-effects variances.}
+#'   \item{acc_prop}{List with per-block beta acceptance (`beta`), per-group
+#'     random-intercept acceptance (`re_u`) and random-effects-var acceptance
+#'     (`re_sigma2u`), each divided by niter.}
+#'   \item{logpost}{niter x (1 + q + 2*p + n_sp_up) matrix of log-full-conditionals.}
+#'   \item{w}{The estimated generalized-Bayes weight.}
 MCMC_IWLS_bikes <- function(niter,
                             X_dummy = NULL,
                             X_cont = NULL,
