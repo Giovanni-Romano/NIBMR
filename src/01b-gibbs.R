@@ -52,6 +52,9 @@
 #'   parameters for the block variances.
 #' @param theta_re Score of the SDP prior placed on the random-effects variance
 #'   sigma2_u (scale of the prior).
+#' @param theta_GMRF Optional SDP scale for the variance of GMRF (if present), 
+#'    as returned in the `root` component of sdPrior::get_theta();
+#'    only used when `X_GMRF` is non-null.
 #' @param debug Logical, reserved for extra diagnostics (currently unused).
 #' @param verbose Integer verbosity level: 0 quiet, 1 progress by 10% steps,
 #'   2 (or more) detailed per-`print_step` summaries.
@@ -76,6 +79,7 @@ MCMC_IWLS <- function(niter,
                             X_cont = NULL,
                             Z_cont = NULL,
                             Z_spat = NULL,
+                            X_GMRF = NULL,
                             id,
                             y,
                             freq = NULL,
@@ -87,6 +91,7 @@ MCMC_IWLS <- function(niter,
                             beta0,
                             a_tau, b_tau,
                             theta_re,
+                            theta_GMRF, K_GMRF,
                             debug = FALSE, verbose = 0, print_step = 1000,
                             hess_eps = 1e-3,
                             step = 1,
@@ -95,6 +100,12 @@ MCMC_IWLS <- function(niter,
   
   cat("Fitting starts at: ", format(Sys.time(), "%H:%M:%S"), "\n")
   
+  # If both X_GMRF and Z_spat are provided signal an error for double spatial effect
+  if (!is.null(Z_spat) & !is.null(X_GMRF)){
+    stop("Provide only one spatial effect design matrix. 
+    User Z_spat for continuous effect and X_GMRF for discrete effect")
+  }
+
   # Dimensions
   # number of binary covariates
   if (is.null(X_dummy)) {
@@ -104,11 +115,14 @@ MCMC_IWLS <- function(niter,
   }
   # number of continuous covariates
   p = ncol(X_cont)
+
   # number of spatial covariates
-  if (is.null(Z_spat)) {
-    s = 0
-  } else {
+  if (!is.null(Z_spat)){
     s = ncol(Z_spat)
+  } else if (!is.null(X_GMRF)) {
+    s = ncol(X_GMRF)
+  } else {
+    s = 0
   }
   n = length(y)
   
@@ -117,7 +131,7 @@ MCMC_IWLS <- function(niter,
   }
   
   # Total number of regression coefficients:
-  # intercept + q binary + p linear + sum(d) nonlinear basis coeffs
+  # intercept + q binary + p linear + sum(d) nonlinear basis coeffs + s for spatial (either GMRF or Splines)
   P <- 1 + q + p + sum(d) + s
   
   if (P != length(beta0)) {
@@ -130,7 +144,7 @@ MCMC_IWLS <- function(niter,
   
   
   # Build design matrix X
-  X = cbind(1, X_dummy, X_cont, Z_cont, Z_spat)
+  X = cbind(1, X_dummy, X_cont, Z_cont, Z_spat, X_GMRF)
   # colnames(X) = c("Intercept", colnames(X_dummy), colnames(X_cont), 
   #                 c(sapply(1:p, function(j) paste0(colnames(X_cont)[j], "_DR", 1:d[j]))),
   #                 paste0("spatial_DR", 1:ncol(Z_spat)))
@@ -210,7 +224,7 @@ MCMC_IWLS <- function(niter,
   
   # IG shape 
   IG_size_vec <- c(rep(1, q + p), d)
-  if (s > 0) IG_size_vec <- c(IG_size_vec, s)
+  if (s > 0 && !is.null(Z_spat)) IG_size_vec <- c(IG_size_vec, s)
   
   
   # Initial values for parameter-expanded random effects
@@ -228,6 +242,12 @@ MCMC_IWLS <- function(niter,
   acc_re_sigma2u  <- 0L
   acc_re_u_tmp <- acc_re_u
   acc_re_sigma2u_tmp  <- acc_re_sigma2u
+
+  # Acceptance counter for the SDP spatial-variance update (only used when a
+  # discrete spatial effect X_GMRF is supplied; otherwise stays 0 and is not 
+  # reported).
+  acc_spat_sdp <- 0L
+  acc_spat_sdp_tmp <- 0L
   
   logpost_sample <- matrix(NA_real_, nrow = niter, ncol = length(acc))
   
@@ -401,6 +421,34 @@ MCMC_IWLS <- function(niter,
       # logpost_sample[m, 1+q+2*p+1] <- up$logpost
       # acc[1+q+2*p+1] <- acc[1+q+2*p+1] + up$accepted
       # acc_tmp[1+q+2*p+1] <- acc_tmp[1+q+2*p+1] + up$accepted
+
+    ## --- Update for discrete spatial effect ---
+    if (!is.null(X_GMRF)) {
+      
+      idx.b = idx.e + 1
+      idx.e = idx.e + s
+      idx = idx.b:idx.e
+      
+      up <- iwls_beta_update(
+        idx = idx,
+        beta_curr = beta_curr,
+        u_curr = u_curr[id_fac],
+        y = y, X = X, X2 = X2,
+        freq = freq,
+        link = link, link_prime = link_prime, link_second = link_second,
+        k_post = k, k_deriv = k_deriv,
+        c_post = c, c_deriv = c_deriv,
+        w = w,
+        tau = tau, tau_idx = tau_idx,
+        hess_eps = hess_eps,
+        step = step/4
+      )
+      beta_curr <- up$beta
+      logpost_sample[m, 1+q+2*p+1] <- up$logpost
+      acc[1+q+2*p+1] <- acc[1+q+2*p+1] + up$accepted
+      acc_tmp[1+q+2*p+1] <- acc_tmp[1+q+2*p+1] + up$accepted
+      
+    }
     }
     
     # Save updated beta after full update
@@ -437,12 +485,28 @@ MCMC_IWLS <- function(niter,
     # --- Update tau ---
     for (j in seq_len(q + 2*p + 1*(s>0))) {
       beta_tmp <- beta_sample[m, 1 + which(tau_idx == j)]
-      
-      var_sample = 1 / rgamma(1,
-                              shape = a_tau[j] + IG_size_vec[j] / 2,
-                              rate  = b_tau[j] + sum(beta_tmp^2) / 2
-      )
-      
+
+      # Spatial block: if an SDP penalty was supplied, update the single shared
+      # spatial variance with the Scale-Dependent Prior (Klein & Kneib 2016)
+      # instead of the inverse-gamma full conditional. All other blocks keep
+      # their conjugate IG full conditional.
+      if (s > 0 && j == q + 2*p + 1 && !is.null(X_GMRF)) {
+        if (is.null(theta_GMRF)) stop("theta_GMRF required when X_GMRF is supplied")
+        up_tau <- iwls_SDP_update(
+          log_tau2 = log(tau[j]^2),
+          K = K_GMRF, rank_K = s,
+          beta = beta_curr[q + p + sum(d) + 1:s], theta = theta_GMRF
+        )
+        var_sample <- exp(up_tau$log_tau2)      # tau[j]^2 on original scale
+        acc_spat_sdp <- acc_spat_sdp + up_tau$accepted
+        acc_spat_sdp_tmp <- acc_spat_sdp_tmp + up_tau$accepted
+      } else {
+        var_sample = 1 / rgamma(1,
+                                shape = a_tau[j] + IG_size_vec[j] / 2,
+                                rate  = b_tau[j] + sum(beta_tmp^2) / 2
+        )
+      }
+
       tau_sample[m, j] <- sqrt(var_sample)
     }
     
@@ -460,6 +524,7 @@ MCMC_IWLS <- function(niter,
           "acc rate (last ", print_step, ") = ", paste(round(acc_tmp / print_step, 3), collapse = " "), "\n",
           "acc rate re [quartiles] (last ", print_step, ") = ", paste(round(quantile(acc_re_u_tmp / print_step, probs = c(0, 0.25, 0.5, 0.75, 1)), 3), collapse = " "), "\n",
           "acc rate re var (last ", print_step, ") = ", paste(round(acc_re_sigma2u_tmp / print_step, 3), collapse = " "), "\n",
+          "acc rate tau GMFR (last ", print_step, ") = ", paste(round(acc_spat_sdp_tmp / print_step, 3), collapse = " "), "\n",
           ifelse(verbose > 2, paste0(" | logpost = ", round(logpost_sample[m], 3)), ""),
           "\n\n\n",
           sep = "")
@@ -467,6 +532,7 @@ MCMC_IWLS <- function(niter,
       acc_tmp <- rep(0L, length(acc))
       acc_re_u_tmp <- rep(0L, n_id)
       acc_re_sigma2u_tmp <- 0L
+      acc_spat_sdp_tmp <- 0L
     }
   }
   
@@ -475,7 +541,9 @@ MCMC_IWLS <- function(niter,
     tau = tau_sample,
     u = u_sample,
     sigma2u = sigma2u_sample,
-    acc_prop = list(beta = acc / niter, re_u = acc_re_u / niter, re_sigma2u = acc_re_sigma2u / niter),
+    acc_prop = list(beta = acc / niter, re_u = acc_re_u / niter,
+                    re_sigma2u = acc_re_sigma2u / niter,
+                    spat_sdp = if (is.null(K_spat)) NULL else acc_spat_sdp / niter),
     logpost = logpost_sample,
     w = w
   )

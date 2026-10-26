@@ -579,8 +579,12 @@ iwls_re_update <- function(u_curr, y, fe, freq = 1,
   log_q_cur_given_prop <- sum(dnorm(u_curr, mean = mu_p, sd = sqrt(Sigma_p), log = T))
   
   # Check if it's the target ratio or the proposal ratio that brings acceptance to zero
-  if (as.numeric(get("verbose", envir = sys.frame(sys.parent(2)))) > 2){
-    if (get("m", envir = parent.frame()) %% get("print_step", envir = parent.frame()) == 0){
+  # (guard the parent-frame lookups so this also works outside the MCMC loop).
+  if (exists("verbose", envir = parent.frame()) &&
+      exists("m", envir = parent.frame()) &&
+      exists("print_step", envir = parent.frame()) &&
+      as.numeric(get("verbose", envir = parent.frame())) > 2) {
+    if (get("m", envir = parent.frame()) %% get("print_step", envir = parent.frame()) == 0) {
       cat("RE update  |  Target diff:", round(prop$logpost - cur$logpost, 2), 
           "| Proposal diff:", round(log_q_cur_given_prop - log_q_prop_given_cur, 2), "\n")
     } 
@@ -944,8 +948,14 @@ iwls_SDP_update = function(log_tau2, K, rank_K, beta, theta, step = 1){
   log_q_cur_given_prop <- sum(dnorm(log_tau2, mean = mu_p, sd = sqrt(Sigma_p), log = T))
   
   # Check if it's the target ratio or the proposal ratio that brings acceptance to zero
-  if (as.numeric(get("verbose", envir = sys.frame(sys.parent(2)))) > 2){
-    if (get("m", envir = sys.frame(sys.parent(2))) %% get("print_step", envir = sys.frame(sys.parent(2))) == 0){
+  # (verbose debug is optional; guard the parent-frame lookups so the function
+  # also runs when called outside the MCMC loop, e.g. in unit tests or in the
+  # SDP spatial-variance path of MCMC_IWLS).
+  if (exists("verbose", envir = parent.frame()) &&
+      exists("m", envir = parent.frame()) &&
+      exists("print_step", envir = parent.frame()) &&
+      as.numeric(get("verbose", envir = parent.frame())) > 2) {
+    if (get("m", envir = parent.frame()) %% get("print_step", envir = parent.frame()) == 0) {
       cat("SDP  |  Target diff:", round(prop$logpost - cur$logpost, 2), 
           "| Proposal diff:", round(log_q_cur_given_prop - log_q_prop_given_cur, 2), "\n")
     } 
