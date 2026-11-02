@@ -246,8 +246,9 @@ MCMC_IWLS <- function(niter,
   # Acceptance counter for the SDP spatial-variance update (only used when a
   # discrete spatial effect X_GMRF is supplied; otherwise stays 0 and is not 
   # reported).
-  acc_spat_sdp <- 0L
-  acc_spat_sdp_tmp <- 0L
+  
+  acc_spat_sdp <- if (!is.null(X_GMRF)) {0L} else {NULL}
+  acc_spat_sdp_tmp <- acc_spat_sdp
   
   logpost_sample <- matrix(NA_real_, nrow = niter, ncol = length(acc))
   
@@ -483,14 +484,14 @@ MCMC_IWLS <- function(niter,
     
     
     # --- Update tau ---
-    for (j in seq_len(q + 2*p + 1*(s>0))) {
+    for (j in seq_len(q + p + p*(!is.null(Z_cont)) + 1*(s>0))) {
       beta_tmp <- beta_sample[m, 1 + which(tau_idx == j)]
 
       # Spatial block: if an SDP penalty was supplied, update the single shared
       # spatial variance with the Scale-Dependent Prior (Klein & Kneib 2016)
       # instead of the inverse-gamma full conditional. All other blocks keep
       # their conjugate IG full conditional.
-      if (s > 0 && j == q + 2*p + 1 && !is.null(X_GMRF)) {
+      if (s > 0 && j == q + p + p*(!is.null(Z_cont)) + 1 && !is.null(X_GMRF)) {
         if (is.null(theta_GMRF)) stop("theta_GMRF required when X_GMRF is supplied")
         up_tau <- iwls_SDP_update(
           log_tau2 = log(tau[j]^2),
@@ -503,8 +504,7 @@ MCMC_IWLS <- function(niter,
       } else {
         var_sample = 1 / rgamma(1,
                                 shape = a_tau[j] + IG_size_vec[j] / 2,
-                                rate  = b_tau[j] + sum(beta_tmp^2) / 2
-        )
+                                rate  = b_tau[j] + sum(beta_tmp^2) / 2)
       }
 
       tau_sample[m, j] <- sqrt(var_sample)
