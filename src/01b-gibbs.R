@@ -234,7 +234,7 @@ MCMC_IWLS <- function(niter,
   
   
   # ---  Storage for acceptance/rejection of MH
-  n_sp_up = floor(s / 5) + 1*(s %% 5 > 0)
+  n_sp_up = ifelse(!is.null(X_GMRF), 1, floor(s / 5) + 1*(s %% 5 > 0))
   acc <- rep(0L, 1 + q + p + (!is.null(Z_cont))*p + n_sp_up)
   acc_tmp <- acc
   
@@ -341,7 +341,7 @@ MCMC_IWLS <- function(niter,
     }
     
     ## --- Block update for each continuous covariate (NON-linear effect) ---
-    if (!is.null(X_cont)){
+    if (!is.null(Z_cont)){
       for (j_DR in 1:p){
         idx.b = (1+q+p) + (sum(d[1:j_DR])-d[j_DR]) + 1
         idx.e = idx.b+d[j_DR]-1
