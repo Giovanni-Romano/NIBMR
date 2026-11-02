@@ -189,7 +189,7 @@ MCMC_IWLS <- function(niter,
   # --- Storage ---
   beta_sample <- matrix(NA_real_, nrow = niter, ncol = P)
   colnames(beta_sample) <- colnames(X)
-  tau_sample <- matrix(NA_real_, nrow = niter, ncol = q + 2 * p + 1*(s>0))
+  tau_sample <- matrix(NA_real_, nrow = niter, ncol = q + p + (!is.null(Z_cont))*p + 1*(s>0))
   # colnames(tau_sample) <- c(
   #   paste0("tau_bin", seq_len(q)),
   #   paste0("tau_lin", seq_len(p)),
@@ -207,7 +207,7 @@ MCMC_IWLS <- function(niter,
   
   # --- Initial values ---
   beta_curr <- unname(drop(beta0))
-  tau <- rep(10, q + 2 * p + 1*(s>0))
+  tau <- rep(10, q + p + (!is.null(Z_cont))*p + 1*(s>0))
   
   
   # Maps beta[-1] to the corresponding tau component:
@@ -235,7 +235,7 @@ MCMC_IWLS <- function(niter,
   
   # ---  Storage for acceptance/rejection of MH
   n_sp_up = floor(s / 5) + 1*(s %% 5 > 0)
-  acc <- rep(0L, 1+q+2*p+n_sp_up)
+  acc <- rep(0L, 1 + q + p + (!is.null(Z_cont))*p + n_sp_up)
   acc_tmp <- acc
   
   acc_re_u <- rep(0L, n_id)
@@ -543,7 +543,7 @@ MCMC_IWLS <- function(niter,
     sigma2u = sigma2u_sample,
     acc_prop = list(beta = acc / niter, re_u = acc_re_u / niter,
                     re_sigma2u = acc_re_sigma2u / niter,
-                    spat_sdp = if (is.null(K_spat)) NULL else acc_spat_sdp / niter),
+                    spat_sdp = if (is.null(K_GMRF)) NULL else acc_spat_sdp / niter),
     logpost = logpost_sample,
     w = w
   )
