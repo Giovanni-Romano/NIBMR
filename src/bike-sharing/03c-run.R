@@ -102,7 +102,7 @@ theta_SDP <- get_theta(Z = diag(1, n_re), Kinv = diag(1, n_re))
 a_tau <- c(rep(A_TAU_LINEAR, q + p), rep(A_TAU_SMOOTH, p + 1))
 b_tau <- c(rep(B_TAU_LINEAR, q + p), rep(B_TAU_SMOOTH, p + 1))
 
-out_MCMC <- MCMC_IWLS_bikes(
+out_MCMC <- MCMC_IWLS(
   niter       = N_ITER,
   X_dummy     = prep$grouped$X_dummy,
   X_cont      = prep$grouped$X_cont,
