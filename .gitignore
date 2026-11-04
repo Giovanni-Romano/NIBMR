@@ -9,8 +9,8 @@
 *.RDS
 application/
 data/
-sim-study/
-sim-study-old/
+/sim-study/
+/sim-study-old/
 stations.db
 
 .Rapp.history
