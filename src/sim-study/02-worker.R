@@ -237,7 +237,7 @@ fit_bamlss_median <- function(dat, predictor, seed = NULL) {
   draws <- as_draws_matrix(samples(fit))[ , idx_draws]
   list(draws = draws,
        fhat = as.vector(predict(fit, newdata = dat, type = "parameter")),
-       design = list(),
+       design = fit$x$mu,
        fit = fit)
 }
 
@@ -398,7 +398,7 @@ run_cell <- function(dgp, predictor, n, replicate, seed_base = 0) {
   # Designs retained and returned (resolves the previously-unused `design`).
   designs <- list(
     m0 = make_design(dat, predictor, splines = TRUE),   # M0/M3 shared
-    # M1 design is directly created in fit_bamlss_median
+    m1 = NULL, # M1 design is directly created in fit_bamlss_median
     m2 = make_design(dat, predictor, splines = FALSE),  # M2
     m4 = build_gud_design(dat, predictor))              # M4
   
@@ -407,6 +407,9 @@ run_cell <- function(dgp, predictor, n, replicate, seed_base = 0) {
                m2 = fit_nils_gbi(dat, predictor, "M2", seed = s + 2000),
                m3 = fit_nils_freq(dat, predictor, seed = s + 2500),
                m4 = fit_gud(dat, predictor, seed_base = s + 3000))
+  
+  designs$m1 <- fits$m1$design  # retain the bamlss design for M1
+  fits$m1$design <- NULL          # remove the bamlss design from fits (redundant)
   
   list(scenario = sim, designs = designs, fits = fits)
 }
