@@ -56,12 +56,18 @@ error_draw <- function(dgp, n) {
 #' gamma  : length-20 vector of region effects (only used by X3).
 #' region : length-n vector of region memberships in 1:20 (only used by X3).
 f_true <- function(predictor, x1, x2, gamma = NULL, region = NULL) {
-  f_X1 <- -4 * x1 + sqrt(32) * x2
-  f_X2 <- (2.75 * x1)^3 + (2 * sin(2 * pi * x2) + 3.25 * exp(-(10 * x2)^2))
+  f_X1.x1 <- function(x) -4 * x
+  f_X1.x2 <- function(x) sqrt(32) * x
+  f_X1 <- function(x1, x2) f_X1.x1(x1) + f_X1.x2(x2)
+  f_X2.x1 <- function(x) (2.75 * x1)^3
+  f_X2.x2 <- function(x) (2 * sin(2 * pi * x) + 3.25 * exp(-(10 * x)^2))
+  f_X2 <- function(x1, x2) f_X2.x1(x1) + f_X2.x2(x2)
+  
   switch(predictor,
-         X1 = f_X1,
-         X2 = f_X2,
-         X3 = sqrt(0.8) * f_X2 + gamma[region]
+         X1 = list(f1 = f_X1.x1(x1), f2 = f_X1.x2(x2), f = f_X1(x1, x2)),
+         X2 = list(f1 = f_X2.x1(x1), f2 = f_X2.x2(x2), f = f_X2(x1, x2)),
+         X3 = list(f1 = sqrt(0.8) * f_X2.x1(x1), f2 = sqrt(0.8) * f_X2.x2(x2), 
+                   f = sqrt(0.8) * f_X2(x1, x2) + gamma[region]),
   )
 }
 
@@ -159,7 +165,7 @@ generate_data <- function(dgp, predictor, n, replicate,
 
   # --- True function and response (full sample) ---
   f0 <- f_true(predictor, x1, x2, gamma, region)
-  y  <- f0 + eps
+  y  <- f0$f + eps
 
   # --- Keep the first `n` rows (nesting: n=250 subset of n=1000) ---
   idx <- seq_len(n)
@@ -168,7 +174,7 @@ generate_data <- function(dgp, predictor, n, replicate,
 
   list(
     dat       = dat,
-    f0        = f0[idx],
+    f0        = lapply(f0, function(x) x[idx]),
     eps       = eps[idx],
     gamma     = gamma,                    # NULL unless X3
     region    = region[idx],              # NULL unless X3
