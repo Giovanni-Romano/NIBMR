@@ -34,6 +34,9 @@ get_CIhpd <- function(draws, X = NULL, prob = 0.95) {
   return(H)
 }
 
+
+boot_CI <- function(){matrix(c(NA, NA), ncol = 2)}
+
 grid_truth <- function(pred, new_x, sp_eff = NULL) {
   ft <- f_true(pred, new_x, new_x)
   f1 <- ft$f1
@@ -63,8 +66,11 @@ results_on_train <- function(s, xval_l = -0.5, xval_u = 0.5, xval_N = 100, probs
   
   for (mod in models){
     
-    if (mod != "m3"){
-      draws <- s$fits[[mod]]$beta
+    if (mod == "m3"){
+      beta <- s$fits[[mod]]$beta
+      draws <- matrix(beta, ncol = length(beta))
+      colnames(draws) <- names(beta)
+      draws
     } else {
       draws <- s$fits[[mod]]$draws
     }
@@ -74,7 +80,7 @@ results_on_train <- function(s, xval_l = -0.5, xval_u = 0.5, xval_N = 100, probs
     new_xtilde1 <- (new_x - mean(dat[ , "x1"]))/sd(dat[ , "x1"])
     new_xtilde2 <- (new_x - mean(dat[ , "x2"]))/sd(dat[ , "x2"])
     
-    if (mod == "m0" | mod == "m3"){
+    if (mod == "m0"){
       dr1 <- des[[mod]]$dr1
       dr2 <- des[[mod]]$dr2
       
@@ -96,6 +102,15 @@ results_on_train <- function(s, xval_l = -0.5, xval_u = 0.5, xval_N = 100, probs
       new_X <- cbind(1, new_TP1, new_TP2)
     } else if (mod == "m2" | mod == "m4") {
       new_X <- cbind(1, new_xtilde1, new_xtilde2)
+    } else if (mod == "m3"){
+      
+      bs1 <- des[[mod]]$bs1
+      bs2 <- des[[mod]]$bs2
+      
+      new_B1 <- Predict.matrix(bs1, data.frame(x = new_x))
+      new_B2 <- Predict.matrix(bs2, data.frame(x = new_x))
+      
+      new_X <- cbind(1, new_B1, new_B2)
     }
     
     
@@ -106,7 +121,7 @@ results_on_train <- function(s, xval_l = -0.5, xval_u = 0.5, xval_N = 100, probs
     x2NL_idx <- grep("x2.s", colnames(draws))
     spat_idx <- NULL
     if (pred == "X3" & mod != "m4"){
-      spat_idx <- grep("gmrf.", colnames(draws))
+      spat_idx <- grep("gmrf", colnames(draws))
     }
     
     effects_idx <- list(int = int_idx, 
@@ -114,7 +129,7 @@ results_on_train <- function(s, xval_l = -0.5, xval_u = 0.5, xval_N = 100, probs
                         f2L = x2L_idx, f2NL = x2NL_idx, f2 = c(x2L_idx, x2NL_idx),
                         spat = spat_idx)
     effects_idx[["fcont"]] <- c(effects_idx$int, 
-                                effects_idx$x1, effects_idx$x2)
+                                effects_idx$f1, effects_idx$f2)
     effects_idx[["f"]] <- c(effects_idx$fcont, effects_idx$spat)
     
     effects_idx <- lapply(effects_idx, function(x) if (length(x) == 0) NULL else x)
@@ -147,7 +162,7 @@ results_on_train <- function(s, xval_l = -0.5, xval_u = 0.5, xval_N = 100, probs
             
             # Save
             D_eff[[eff]] <- D; D_eff_grid[[eff]] <- D_grid
-            point_est[[eff]] <- pe; point_est_grid[[eff]] <- pe_grid
+            point_est[[eff]] <- unname(pe); point_est_grid[[eff]] <- unname(pe_grid)
             CI_quant[[eff]] <- quant
             CI_hpd[[eff]] <- hpd
           } else if (eff %in% c("f1L", "f1NL", "f1", "f2L", "f2NL", "f2")){
@@ -162,7 +177,7 @@ results_on_train <- function(s, xval_l = -0.5, xval_u = 0.5, xval_N = 100, probs
             
             # Save
             D_eff[[eff]] <- D; D_eff_grid[[eff]] <- D_grid
-            point_est[[eff]] <- pe; point_est_grid[[eff]] <- pe_grid
+            point_est[[eff]] <- unname(pe); point_est_grid[[eff]] <- unname(pe_grid)
             CI_quant[[eff]] <- quant
             CI_hpd[[eff]] <- hpd
           } else if (eff == "fcont"){
@@ -177,43 +192,46 @@ results_on_train <- function(s, xval_l = -0.5, xval_u = 0.5, xval_N = 100, probs
             
             # Save
             D_eff[[eff]] <- D; D_eff_grid[[eff]] <- D_grid
-            point_est[[eff]] <- pe; point_est_grid[[eff]] <- pe_grid
+            point_est[[eff]] <- unname(pe); point_est_grid[[eff]] <- unname(pe_grid)
             CI_quant[[eff]] <- quant
             CI_hpd[[eff]] <- hpd
           } else if (eff == "spat"){
             # Compute
             reg <- dat$region
-            V <- X[order(reg), eff_idx]
-            uV <- unique(V)
-            D <- draws[ , eff_idx] %*% t(uV)
+            V <- X[ , eff_idx]
+            uV <- unique(V[order(reg), ])
+            D <- draws[ , eff_idx] %*% t(V)
+            D_grid <- draws[ , eff_idx] %*% t(uV)
             pe <- colMeans(D)
-            quant <- t(apply(D, 2, quantile, probs = probs))
-            hpd <- HPDinterval(as.mcmc(D), prob = probs[1] + (1-probs[2]))
+            pe_grid <- colMeans(D_grid)
+            quant <- t(apply(D_grid, 2, quantile, probs = probs))
+            hpd <- HPDinterval(as.mcmc(D_grid), prob = probs[1] + (1-probs[2]))
             colnames(quant) <- colnames(hpd) <- c("LB", "UP")
             
             # Save
-            D_eff[[eff]] <- D; D_eff_grid[[eff]] <- D
-            point_est[[eff]] <- pe; point_est_grid[[eff]] <- pe
+            D_eff[[eff]] <- D; D_eff_grid[[eff]] <- D_grid
+            point_est[[eff]] <- unname(pe); point_est_grid[[eff]] <- unname(pe_grid)
             CI_quant[[eff]] <- quant
             CI_hpd[[eff]] <- hpd
           } else if (eff == "f"){
             if (is.null(effects_idx$spat)){
-              D_eff[[eff]] <- D_eff[["f"]]; D_eff_grid[[eff]] <- D_eff[["f"]]
-              point_est[[eff]] <- pe; point_est_grid[[eff]] <- point_est[["f"]]
-              CI_quant[[eff]] <- CI_quant[["f"]]
-              CI_hpd[[eff]] <- CI_hpd[["f"]]
+              D_eff[[eff]] <- D_eff[["fcont"]]; D_eff_grid[[eff]] <- D_eff[["fcont"]]
+              point_est[[eff]] <- point_est[["fcont"]]; point_est_grid[[eff]] <- point_est_grid[["fcont"]]
+              CI_quant[[eff]] <- CI_quant[["fcont"]]
+              CI_hpd[[eff]] <- CI_hpd[["fcont"]]
             } else {
               # Compute
-              D <- apply(D_eff$spat, 2, function(x) x + D_eff$fcont)
+              D <- D_eff$spat + D_eff$fcont
               D_grid <- apply(D_eff_grid$spat, 2, function(x) x + D_eff_grid$fcont)
-              pe <- point_est$fcont + point_est$fspat
+              pe <- point_est$fcont + point_est$spat
+              pe_grid <- lapply(point_est_grid$spat, function(x) x + point_est_grid$fcont)
               quant <- t(apply(D_grid, 2, quantile, probs = probs))
               hpd <- HPDinterval(as.mcmc(D_grid), prob = probs[1] + (1-probs[2]))
               colnames(quant) <- colnames(hpd) <- c("LB", "UP")
               
               # Save
               D_eff[[eff]] <- D; D_eff_grid[[eff]] <- D_grid
-              point_est[[eff]] <- pe; point_est_grid[[eff]] <- pe_grid
+              point_est[[eff]] <- unname(pe); point_est_grid[[eff]] <- unname(pe_grid)
               CI_quant[[eff]] <- quant
               CI_hpd[[eff]] <- hpd
             }
@@ -223,12 +241,100 @@ results_on_train <- function(s, xval_l = -0.5, xval_u = 0.5, xval_N = 100, probs
       
       res[[mod]] <- list(point_est = point_est, point_est_grid = point_est_grid,
                          CI_quant = CI_quant, CI_hpd = CI_hpd)
-    } else {
+    } else if (mod == "m3") {
       
+      point_est <- point_est_grid <- CI_freq <- vector(mode = "list", length = length(effects_idx))
+      names(point_est) <- names(point_est_grid) <- names(CI_freq) <- names(CI_freq) <- names(effects_idx)
       
+      D_eff <- D_eff_grid <- vector(mode = "list", length = length(effects_idx))
+      names(D_eff) <- names(D_eff_grid) <- names(effects_idx)
       
-      res[[mod]] <- integer(0)
-      cat("Computations of CI for m3 currently not implemented!!!")
+      for (E in seq_along(effects_idx)){
+        
+        eff <- names(effects_idx)[E]
+        eff_idx <- effects_idx[[E]]
+        
+        if (is.null(eff_idx)){
+          NULL
+        } else {
+          if (eff == "int"){
+            # Compute
+            D <- drop(draws[ , 1])
+            D_grid <- drop(draws[ , 1])
+            pe <- D
+            pe_grid <- D_grid
+            quant <- boot_CI() # still to be implemented
+            names(quant) <- c("LB", "UP")
+            
+            # Save
+            D_eff[[eff]] <- D; D_eff_grid[[eff]] <- D_grid
+            point_est[[eff]] <- unname(pe); point_est_grid[[eff]] <- unname(pe_grid)
+            CI_quant[[eff]] <- quant
+          } else if (eff %in% c("f1NL", "f1", "f2NL", "f2")){ # there are no explicit linear components in this model
+            # Compute
+            D <- drop(draws[ , eff_idx] %*% t(X[ , eff_idx]))
+            D_grid <- drop(draws[ , eff_idx] %*% t(new_X[ , eff_idx]))
+            pe <- D
+            pe_grid <- D_grid
+            quant <- boot_CI() # still to be implemented
+            colnames(quant) <- c("LB", "UP")
+            
+            # Save
+            D_eff[[eff]] <- D; D_eff_grid[[eff]] <- D_grid
+            point_est[[eff]] <- unname(pe); point_est_grid[[eff]] <- unname(pe_grid)
+            CI_quant[[eff]] <- quant
+          } else if (eff == "fcont"){
+            # Compute
+            D <- D_eff$f1 + D_eff$f2
+            D_grid <- D_eff_grid$f1 + D_eff_grid$f2
+            pe <- point_est$f1 + point_est$f2
+            pe_grid <- point_est_grid$f1 + point_est_grid$f2
+            quant <- boot_CI() # still to be implemented
+            colnames(quant) <- c("LB", "UP")
+            
+            # Save
+            D_eff[[eff]] <- D; D_eff_grid[[eff]] <- D_grid
+            point_est[[eff]] <- unname(pe); point_est_grid[[eff]] <- unname(pe_grid)
+            CI_quant[[eff]] <- quant
+          } else if (eff == "spat"){
+            # Compute
+            D <- drop(draws[ , eff_idx] %*% t(X[ , eff_idx]))
+            D_grid <- drop(draws[ , eff_idx])
+            pe <- D
+            pe_grid <- D_grid
+            quant <- boot_CI() # still to be implemented
+            colnames(quant) <- c("LB", "UP")
+            
+            # Save
+            D_eff[[eff]] <- D; D_eff_grid[[eff]] <- D_grid
+            point_est[[eff]] <- unname(pe); point_est_grid[[eff]] <- unname(pe_grid)
+            CI_quant[[eff]] <- quant
+          } else if (eff == "f"){
+            if (is.null(effects_idx$spat)){
+              D_eff[[eff]] <- D_eff[["fcont"]]; D_eff_grid[[eff]] <- D_eff[["fcont"]]
+              point_est[[eff]] <- point_est[["fcont"]]; point_est_grid[[eff]] <- point_est_grid[["fcont"]]
+              CI_quant[[eff]] <- CI_quant[["fcont"]]
+              CI_hpd[[eff]] <- CI_hpd[["fcont"]]
+            } else {
+              # Compute
+              D <- D_eff$spat + D_eff$fcont
+              D_grid <- sapply(D_eff_grid$spat, function(x) x + D_eff_grid$fcont)
+              pe <- point_est$fcont + point_est$spat
+              pe_grid <- lapply(point_est_grid$spat, function(x) x + point_est_grid$fcont)
+              quant <- boot_CI() # still to be implemented
+              colnames(quant) <- c("LB", "UP")
+              
+              # Save
+              D_eff[[eff]] <- D; D_eff_grid[[eff]] <- D_grid
+              point_est[[eff]] <- unname(pe); point_est_grid[[eff]] <- unname(pe_grid)
+              CI_quant[[eff]] <- quant
+            }
+          }
+        }
+      }
+      
+      res[[mod]] <- list(point_est = point_est, point_est_grid = point_est_grid,
+                         CI_quant = CI_quant)
     }
     
   }
