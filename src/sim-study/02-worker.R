@@ -160,11 +160,11 @@ make_design <- function(dat, predictor, splines) {
   if (predictor == "X3") {
     ridx <- as.integer(dat$region)
     X_GMRF <- gmrf_design$V_tilde[ridx, , drop = FALSE] # equivalent to Z %*% V_tilde
-    s <- gmfr_design$k
+    s <- gmrf_design$k
     K_GMRF <- diag(1, s)
     cat("Currently theta_GMRF is fixed to 1 for debugging purposes!!!! \n")
     theta_GMRF <- 1
-    # theta_GMRF <- sdPrior::get_theta(Z = model.matrix(~-1 + dat$region), Kinv = gmfr_design$K_minus)
+    # theta_GMRF <- sdPrior::get_theta(Z = model.matrix(~-1 + dat$region), Kinv = gmrf_design$K_minus)
   }
   X <- cbind(1, X_cont, Z_cont, X_GMRF)
   list(X = X, X_cont = X_cont, Z_cont = Z_cont, X_GMRF = X_GMRF,
