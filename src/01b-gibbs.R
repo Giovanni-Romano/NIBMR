@@ -235,7 +235,8 @@ MCMC_IWLS <- function(niter,
   )
   
   # IG shape 
-  IG_size_vec <- c(rep(1, q + p), d)
+  IG_size_vec <- c(rep(1, q + p), 
+                   if (p_nonlin > 0) d else integer(0))
   if (s > 0 && !is.null(Z_spat)) IG_size_vec <- c(IG_size_vec, s)
   
   
