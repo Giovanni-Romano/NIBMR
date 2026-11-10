@@ -75,28 +75,28 @@
 #'   \item{logpost}{niter x (1 + q + 2*p + n_sp_up) matrix of log-full-conditionals.}
 #'   \item{w}{The estimated generalized-Bayes weight.}
 MCMC_IWLS <- function(niter,
-                            X_dummy = NULL,
-                            X_cont = NULL,
-                            Z_cont = NULL,
-                            Z_spat = NULL,
-                            X_GMRF = NULL,
-                            id,
-                            y,
-                            freq = NULL,
-                            link = function(x) x,
-                            link_prime = function(x) rep(1, length(x)),
-                            link_second = function(x) rep(0, length(x)),
-                            k, k_deriv, c, c_deriv,
-                            d, # splines dimension for every continuous covariate
-                            beta0,
-                            a_tau, b_tau,
-                            theta_re,
-                            theta_GMRF, K_GMRF,
-                            debug = FALSE, verbose = 0, print_step = 1000,
-                            hess_eps = 1e-3,
-                            step = 1,
-                            K_fold = 50,
-                            seed = NULL) {
+                      X_dummy = NULL,
+                      X_cont = NULL,
+                      Z_cont = NULL,
+                      Z_spat = NULL,
+                      X_GMRF = NULL,
+                      id = NULL,
+                      y,
+                      freq = NULL,
+                      link = function(x) x,
+                      link_prime = function(x) rep(1, length(x)),
+                      link_second = function(x) rep(0, length(x)),
+                      k, k_deriv, c, c_deriv,
+                      d, # splines dimension for every continuous covariate
+                      beta0,
+                      a_tau, b_tau,
+                      theta_re = NULL,
+                      theta_GMRF = NULL, K_GMRF = NULL,
+                      debug = FALSE, verbose = 0, print_step = 1000,
+                      hess_eps = 1e-3,
+                      step = 1,
+                      K_fold = 50,
+                      seed = NULL) {
   
   cat("Fitting starts at: ", format(Sys.time(), "%H:%M:%S"), "\n")
   
@@ -105,7 +105,7 @@ MCMC_IWLS <- function(niter,
     stop("Provide only one spatial effect design matrix. 
     User Z_spat for continuous effect and X_GMRF for discrete effect")
   }
-
+  
   # Dimensions
   # number of binary covariates
   if (is.null(X_dummy)) {
@@ -115,7 +115,7 @@ MCMC_IWLS <- function(niter,
   }
   # number of continuous covariates
   p = ncol(X_cont)
-
+  
   # number of spatial covariates
   if (!is.null(Z_spat)){
     s = ncol(Z_spat)
@@ -125,6 +125,16 @@ MCMC_IWLS <- function(niter,
     s = 0
   }
   n = length(y)
+  
+  use_re <- !is.null(id)
+  
+  if (use_re) {
+    if (length(id) != n || anyNA(id))
+      stop("id must have length length(y) and contain no missing values.")
+    
+    if (is.null(theta_re))
+      stop("theta_re is required when id is supplied.")
+  }
   
   if (!(length(d) == p)) {
     stop("Length of d must be equal to number of continuous covariates (i.e. # cols of X_cont)")
@@ -166,7 +176,7 @@ MCMC_IWLS <- function(niter,
   CV <- sapply(1:K, function(f) {
     test_idx  <- which(fold_id == f)
     train_idx <- setdiff(seq_len(n), test_idx)
-
+    
     est <- optim(
       par = beta0,
       fn = function(b) {
@@ -175,10 +185,10 @@ MCMC_IWLS <- function(niter,
       },
       method = "L-BFGS-B"
     )$par
-
+    
     sum(freq[test_idx] * loss_fun(y[test_idx] - link(X[test_idx, , drop = FALSE] %*% est), k, c))
   })
-
+  
   mean_cv <- sum(CV) / sum(freq)
   w <- w_num / mean_cv
   end_Kfold <- Sys.time()
@@ -199,10 +209,11 @@ MCMC_IWLS <- function(niter,
   # --- Storage for random effects ---
   # u_i ~ N(0, sigma_u^2)
   # sigma_u ~ half-t with nu_re df, location 0 and scale A_re
-  id_fac <- match(id, unique(id))
-  n_id <- max(id_fac)
-  u_sample   <- matrix(NA_real_, nrow = niter, ncol = n_id)
-  sigma2u_sample <- numeric(niter)
+  # --- Storage for optional random effects ---
+  id_fac <- if (use_re) match(id, unique(id)) else integer(0)
+  n_id <- if (use_re) max(id_fac) else 0L
+  u_sample <- if (use_re) matrix(NA_real_, nrow = niter, ncol = n_id) else NULL
+  sigma2u_sample <- if (use_re) numeric(niter) else NULL
   
   
   # --- Initial values ---
@@ -228,8 +239,13 @@ MCMC_IWLS <- function(niter,
   
   
   # Initial values for parameter-expanded random effects
-  sigma2u_curr <-rweibull(n = 1, shape = 1/2, scale = theta_re)
-  u_curr <- rnorm(n_id, mean = 0, sd = sqrt(sigma2u_curr))
+  if (use_re) {
+    sigma2u_curr <- rweibull(1, shape = 1/2, scale = theta_re)
+    u_curr <- rnorm(n_id, mean = 0, sd = sqrt(sigma2u_curr))
+  } else {
+    sigma2u_curr <- NULL
+    u_curr <- numeric(0)
+  }
   
   
   
@@ -242,7 +258,7 @@ MCMC_IWLS <- function(niter,
   acc_re_sigma2u  <- 0L
   acc_re_u_tmp <- acc_re_u
   acc_re_sigma2u_tmp  <- acc_re_sigma2u
-
+  
   # Acceptance counter for the SDP spatial-variance update (only used when a
   # discrete spatial effect X_GMRF is supplied; otherwise stays 0 and is not 
   # reported).
@@ -268,13 +284,14 @@ MCMC_IWLS <- function(niter,
       cat(round(100 * m / niter), "%\t")
     }
     
-    # --- IWLS update for beta ---
+    u_obs <- if (use_re) u_curr[id_fac] else numeric(n)
     
+    # --- IWLS update for beta ---
     ## --- Update intercept ---
     up <- iwls_beta_update(
       idx = 1,
       beta_curr = beta_curr,
-      u_curr = u_curr[id_fac],
+      u_curr = u_obs,
       y = y, X = X, X2 = X2,
       freq = freq,
       link = link, link_prime = link_prime, link_second = link_second,
@@ -298,7 +315,7 @@ MCMC_IWLS <- function(niter,
         up <- iwls_beta_update(
           idx = idx,
           beta_curr = beta_curr,
-          u_curr = u_curr[id_fac],
+          u_curr = u_obs,
           y = y, X = X, X2 = X2,
           freq = freq,
           link = link, link_prime = link_prime, link_second = link_second,
@@ -323,7 +340,7 @@ MCMC_IWLS <- function(niter,
         up <- iwls_beta_update(
           idx = idx,
           beta_curr = beta_curr,
-          u_curr = u_curr[id_fac],
+          u_curr = u_obs,
           y = y, X = X, X2 = X2,
           freq = freq,
           link = link, link_prime = link_prime, link_second = link_second,
@@ -350,7 +367,7 @@ MCMC_IWLS <- function(niter,
         up <- iwls_beta_update(
           idx = idx,
           beta_curr = beta_curr,
-          u_curr = u_curr[id_fac],
+          u_curr = u_obs,
           y = y, X = X, X2 = X2,
           freq = freq,
           link = link, link_prime = link_prime, link_second = link_second,
@@ -382,7 +399,7 @@ MCMC_IWLS <- function(niter,
         up <- iwls_beta_update(
           idx = idx,
           beta_curr = beta_curr,
-          u_curr = u_curr[id_fac],
+          u_curr = u_obs,
           y = y, X = X, X2 = X2,
           freq = freq,
           link = link, link_prime = link_prime, link_second = link_second,
@@ -398,42 +415,43 @@ MCMC_IWLS <- function(niter,
         acc[1+q+2*p+r] <- acc[1+q+2*p+r] + up$accepted
         acc_tmp[1+q+2*p+r] <- acc_tmp[1+q+2*p+r] + up$accepted
       }
-      
-      # Single block update for spatial effects (acc. prob. too low)
-      # idx.b = idx.e + 1
-      # idx.e = idx.e + s
-      # idx = idx.b:idx.e
-      # 
-      # up <- iwls_beta_update(
-      #   idx = idx,
-      #   beta_curr = beta_curr,
-      #   u_curr = u_curr[id_fac],
-      #   y = y, X = X, X2 = X2,
-      #   freq = freq,
-      #   link = link, link_prime = link_prime, link_second = link_second,
-      #   k_post = k, k_deriv = k_deriv,
-      #   c_post = c, c_deriv = c_deriv, 
-      #   w = w,
-      #   tau = tau, tau_idx = tau_idx,
-      #   hess_eps = hess_eps,
-      #   step = step/4
-      # )
-      # beta_curr <- up$beta
-      # logpost_sample[m, 1+q+2*p+1] <- up$logpost
-      # acc[1+q+2*p+1] <- acc[1+q+2*p+1] + up$accepted
-      # acc_tmp[1+q+2*p+1] <- acc_tmp[1+q+2*p+1] + up$accepted
-
+    }
+    
+    # Single block update for spatial effects (acc. prob. too low)
+    # idx.b = idx.e + 1
+    # idx.e = idx.e + s
+    # idx = idx.b:idx.e
+    # 
+    # up <- iwls_beta_update(
+    #   idx = idx,
+    #   beta_curr = beta_curr,
+    #   u_curr = u_curr[id_fac],
+    #   y = y, X = X, X2 = X2,
+    #   freq = freq,
+    #   link = link, link_prime = link_prime, link_second = link_second,
+    #   k_post = k, k_deriv = k_deriv,
+    #   c_post = c, c_deriv = c_deriv, 
+    #   w = w,
+    #   tau = tau, tau_idx = tau_idx,
+    #   hess_eps = hess_eps,
+    #   step = step/4
+    # )
+    # beta_curr <- up$beta
+    # logpost_sample[m, 1+q+2*p+1] <- up$logpost
+    # acc[1+q+2*p+1] <- acc[1+q+2*p+1] + up$accepted
+    # acc_tmp[1+q+2*p+1] <- acc_tmp[1+q+2*p+1] + up$accepted
+    
     ## --- Update for discrete spatial effect ---
     if (!is.null(X_GMRF)) {
       
-      idx.b = idx.e + 1
-      idx.e = idx.e + s
-      idx = idx.b:idx.e
+      idx.b <- 1 + q + p + sum(d) + 1
+      idx.e <- P
+      idx <- idx.b:idx.e
       
       up <- iwls_beta_update(
         idx = idx,
         beta_curr = beta_curr,
-        u_curr = u_curr[id_fac],
+        u_curr = u_obs,
         y = y, X = X, X2 = X2,
         freq = freq,
         link = link, link_prime = link_prime, link_second = link_second,
@@ -450,43 +468,45 @@ MCMC_IWLS <- function(niter,
       acc_tmp[1+q+2*p+1] <- acc_tmp[1+q+2*p+1] + up$accepted
       
     }
-    }
     
     # Save updated beta after full update
     beta_sample[m, ] <- beta_curr
     
     
     # --- Random intercept update ---
-    up_re <- update_re(
-      u = u_curr, sigma2_u = sigma2u_curr, id = id,
-      theta = theta_re,
-      X = X, y = y, freq = freq,
-      beta = beta_curr,
-      link = link, link_prime = link_prime, link_second = link_second,
-      k_post = k, k_deriv = k_deriv, c_post = c, c_deriv = c_deriv,
-      w = w,
-      hess_eps = hess_eps,
-      step = step)
+    if (use_re){
+      up_re <- update_re(
+        u = u_curr, sigma2_u = sigma2u_curr, id = id,
+        theta = theta_re,
+        X = X, y = y, freq = freq,
+        beta = beta_curr,
+        link = link, link_prime = link_prime, link_second = link_second,
+        k_post = k, k_deriv = k_deriv, c_post = c, c_deriv = c_deriv,
+        w = w,
+        hess_eps = hess_eps,
+        step = step)
+      
+      # Update current values for rand. eff.
+      u_curr <- up_re$u
+      sigma2u_curr <- up_re$sigma2_u
+      
+      # Save sampled values for rand. eff.
+      u_sample[m, ] <- u_curr
+      sigma2u_sample[m] <- sigma2u_curr
+      
+      # Save acceptance rates for rand. eff.
+      acc_re_u_tmp <- acc_re_u_tmp + up_re$acc_u
+      acc_re_u <- acc_re_u + up_re$acc_u
+      acc_re_sigma2u_tmp <- acc_re_sigma2u_tmp + up_re$acc_sigma
+      acc_re_sigma2u <- acc_re_sigma2u + up_re$acc_sigma
+    }
     
-    # Update current values for rand. eff.
-    u_curr <- up_re$u
-    sigma2u_curr <- up_re$sigma2_u
-    
-    # Save sampled values for rand. eff.
-    u_sample[m, ] <- u_curr
-    sigma2u_sample[m] <- sigma2u_curr
-    
-    # Save acceptance rates for rand. eff.
-    acc_re_u_tmp <- acc_re_u_tmp + up_re$acc_u
-    acc_re_u <- acc_re_u + up_re$acc_u
-    acc_re_sigma2u_tmp <- acc_re_sigma2u_tmp + up_re$acc_sigma
-    acc_re_sigma2u <- acc_re_sigma2u + up_re$acc_sigma
     
     
     # --- Update tau ---
     for (j in seq_len(q + p + p*(!is.null(Z_cont)) + 1*(s>0))) {
       beta_tmp <- beta_sample[m, 1 + which(tau_idx == j)]
-
+      
       # Spatial block: if an SDP penalty was supplied, update the single shared
       # spatial variance with the Scale-Dependent Prior (Klein & Kneib 2016)
       # instead of the inverse-gamma full conditional. All other blocks keep
@@ -506,7 +526,7 @@ MCMC_IWLS <- function(niter,
                                 shape = a_tau[j] + IG_size_vec[j] / 2,
                                 rate  = b_tau[j] + sum(beta_tmp^2) / 2)
       }
-
+      
       tau_sample[m, j] <- sqrt(var_sample)
     }
     
@@ -522,8 +542,9 @@ MCMC_IWLS <- function(niter,
           "last ", print_step, " iter time: ", diff_time_last, " mins | ", 
           "total exe time: ", diff_time_start, " mins \n",
           "acc rate (last ", print_step, ") = ", paste(round(acc_tmp / print_step, 3), collapse = " "), "\n",
-          "acc rate re [quartiles] (last ", print_step, ") = ", paste(round(quantile(acc_re_u_tmp / print_step, probs = c(0, 0.25, 0.5, 0.75, 1)), 3), collapse = " "), "\n",
-          "acc rate re var (last ", print_step, ") = ", paste(round(acc_re_sigma2u_tmp / print_step, 3), collapse = " "), "\n",
+          if (use_re) paste0("acc rate re [quartiles] (last ", print_step, ") = ",
+                             paste(round(quantile(acc_re_u_tmp / print_step, probs = c(0, 0.25, 0.5, 0.75, 1)), 3), collapse = " "),
+                             "\n", "acc rate re var (last ", print_step, ") = ", round(acc_re_sigma2u_tmp / print_step, 3), "\n"),
           "acc rate tau GMFR (last ", print_step, ") = ", paste(round(acc_spat_sdp_tmp / print_step, 3), collapse = " "), "\n",
           ifelse(verbose > 2, paste0(" | logpost = ", round(logpost_sample[m], 3)), ""),
           "\n\n\n",
@@ -541,8 +562,9 @@ MCMC_IWLS <- function(niter,
     tau = tau_sample,
     u = u_sample,
     sigma2u = sigma2u_sample,
-    acc_prop = list(beta = acc / niter, re_u = acc_re_u / niter,
-                    re_sigma2u = acc_re_sigma2u / niter,
+    acc_prop = list(beta = acc / niter, 
+                    re_u = if (use_re) acc_re_u / niter else NULL,
+                    re_sigma2u = if (use_re) acc_re_sigma2u / niter else NULL,
                     spat_sdp = if (is.null(K_GMRF)) NULL else acc_spat_sdp / niter),
     logpost = logpost_sample,
     w = w
@@ -605,14 +627,14 @@ MCMC_IWLS <- function(niter,
 #'   \item{logpost}{niter x (1+p) matrix of log-full-conditionals per update.}
 #'   \item{w}{The estimated generalized-Bayes weight.}
 MCMC_IWLS_basic_deprecated <- function(niter,
-                      X, y, 
-                      k, k_deriv, c, c_deriv,
-                      p, d, beta0,
-                      a_tau, b_tau,
-                      debug = FALSE, verbose = FALSE, print_step = 1000,
-                      hess_eps = 1e-3,
-                      K_fold = 50,
-                      seed = NULL) {
+                                       X, y, 
+                                       k, k_deriv, c, c_deriv,
+                                       p, d, beta0,
+                                       a_tau, b_tau,
+                                       debug = FALSE, verbose = FALSE, print_step = 1000,
+                                       hess_eps = 1e-3,
+                                       K_fold = 50,
+                                       seed = NULL) {
   
   # Total number of regression coefficients:
   # intercept + p linear + sum(d) nonlinear basis coeffs
