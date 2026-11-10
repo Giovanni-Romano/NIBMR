@@ -48,8 +48,8 @@ k_n <- function(n) {
 }
 
 # MCMC settings (every Bayesian model, every replicate).
-MCMC_NITER  <- 1100   # total iterations
-MCMC_BURNIN <- 100    # discard
+MCMC_NITER  <- 110   # total iterations
+MCMC_BURNIN <- 10    # discard
 MCMC_THIN   <- 1      # keep every 10th  => (11000-1000)/10 = 1000 draws
 
 # Spline dimension per continuous covariate (M0/M3), 2nd-order penalty.
@@ -141,9 +141,9 @@ gmrf_design <- local({
 # --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
 # 4. DESIGN BUILDER ####
 # --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
-# splines=TRUE -> DR P-splines for x1,x2 (M0, M3); FALSE -> linear (M2).
+# splines=TRUE -> DR P-splines for x1,x2 (M0); FALSE -> linear (M2).
 # X3 always adds the GMRF; X1/X2 never do.
-make_design <- function(dat, predictor, splines) {
+make_design_M0 <- function(dat, predictor, splines) {
   x1 <- dat$x1; x2 <- dat$x2
   X_cont <- scale(cbind(x1, x2))
   Z_cont <- NULL
@@ -171,6 +171,52 @@ make_design <- function(dat, predictor, splines) {
        K_GMRF = K_GMRF, theta_GMRF = theta_GMRF,
        dr1 = dr1, dr2 = dr2,               # for test_design
        d = d, p = ncol(X_cont), q = 0L, s = s)
+}
+
+make_design_M3 <- function(dat, predictor) {
+  predictor <- match.arg(predictor, c("X1", "X2", "X3"))
+  
+  make_bs <- function(x) {
+    mgcv::smoothCon(mgcv::s(x, bs = "ps", k = D_SPLINE + 2L, m = c(2, 2)),
+                    data = data.frame(x = x),
+                    absorb.cons = TRUE, scale.penalty = FALSE)[[1L]]
+  }
+  
+  bs1 <- make_bs(dat$x1)
+  bs2 <- make_bs(dat$x2)
+  
+  B1 <- bs1$X; colnames(B1) <- paste0("x1.bs", seq_len(ncol(B1)))
+  B2 <- bs2$X; colnames(B2) <- paste0("x2.bs", seq_len(ncol(B2)))
+  
+  R <- matrix(numeric(0), nrow = nrow(dat), ncol = 0L)
+  region_levels <- region_contrasts <- NULL
+  
+  if (predictor == "X3") {
+    reg <- if (is.factor(dat$region)) {dat$region} else {factor(dat$region)}
+    
+    if (anyNA(reg) || any(table(reg) == 0L)) {stop("M3 requires observations in every declared region.")}
+    if (nlevels(reg) < 2L) {stop("X3 requires at least two observed regions.")}
+    
+    region_levels <- levels(reg)
+    
+    # Sum-to-zero region effects: s regions, s - 1 coefficients.
+    region_contrasts <- contr.sum(region_levels)
+    colnames(region_contrasts) <- paste0("region.c", seq_len(ncol(region_contrasts)))
+    
+    R <- region_contrasts[as.integer(reg), , drop = FALSE]
+  }
+  
+  X <- cbind(Intercept = 1, B1, B2, R)
+  
+  if (qr(X)$rank < ncol(X)) {stop("M3 design matrix is rank deficient.")}
+  
+  idx <- list(intercept = 1L, x1 = 1L + seq_len(ncol(B1)),
+              x2 = 1L + ncol(B1) + seq_len(ncol(B2)),
+              region = 1L + ncol(B1) + ncol(B2) + seq_len(ncol(R)))
+  
+  list(X = X, bs1 = bs1, bs2 = bs2, 
+       region_levels = region_levels, region_contrasts = region_contrasts, s = ncol(R),
+       idx = idx, predictor = predictor)
 }
 
 
@@ -244,7 +290,7 @@ extract_design_draws_bamlss <- function(fit, model = "mu") {
 ## M0 / M2 : Bayesian NIL+GBI ----
 # model_type "M0" = splines, "M2" = linear; X3 adds the GMRF in both.
 fit_nils_gbi <- function(dat, predictor, model_type, seed = NULL) {
-  dd <- make_design(dat, predictor, splines = (model_type == "M0"))
+  dd <- make_design_M0(dat, predictor, splines = (model_type == "M0"))
   n <- nrow(dat); y <- dat$y; X <- dd$X
   kn <- k_n(n); cn <- c_n(n)
   
@@ -290,12 +336,12 @@ fit_nils_gbi <- function(dat, predictor, model_type, seed = NULL) {
                              X3 = c("Intercept", "x1", "x2", 
                                     paste0("x1.s", 1:D_SPLINE), 
                                     paste0("x2.s", 1:D_SPLINE),
-                                    paste("gmrf", 1:dd$s)))
+                                    paste0("gmrf", 1:dd$s)))
   } else if (model_type == "M2") {
     variable_names <- switch(predictor,
                              X1 = c("Intercept", "x1", "x2"),
                              X2 = c("Intercept", "x1", "x2"),
-                             X3 = c("Intercept", "x1", "x2", paste("gmrf", 1:dd$s)))
+                             X3 = c("Intercept", "x1", "x2", paste0("gmrf", 1:dd$s)))
   }
   
   
@@ -349,8 +395,9 @@ fit_bamlss_median <- function(dat, predictor, seed = NULL) {
 }
 
 ## M3 : frequentist NIL (same loss & design as M0) ----
-fit_nils_freq <- function(dat, predictor, seed = NULL) {
-  dd <- make_design(dat, predictor, splines = TRUE)
+fit_nils_freq <- function(dat, predictor, seed = NULL, lambda_sp = 0) {
+  dd <- make_design_M3(dat, predictor)
+  
   n <- nrow(dat); y <- dat$y; X <- dd$X
   kn <- k_n(n); cn <- c_n(n)
   med <- quantreg::rq.fit(X, y, tau = 0.5)
@@ -358,34 +405,19 @@ fit_nils_freq <- function(dat, predictor, seed = NULL) {
   k   <- c(kn / s12["s1"], kn / s12["s2"])
   P   <- ncol(X)
   
-  if (predictor != "X3"){
-    loss_sum  <- function(b) sum(loss_asymm(y - X %*% b, k = k, c = cn))
-  } else {
-    # If the predictor is X3, hence it includes the spatial effect,
-    # we need to add penalization term for neighboring structure.
-    # Since we use the MMR, the penalty matrix is diagonal, as the penalty
-    # is incorporated in the V vectors.
-    loss_sum  <- function(b) sum(loss_asymm(y - X %*% b, k = k, c = cn)) + 
-      lambda_sp * sum(b[spatial_idx]^2)
+  # Spatial coefficients are the final dd$s columns of X.
+  spatial_idx <- if (dd$s > 0L) {seq.int(P - dd$s + 1L, P)} else {integer(0)}
+  
+  stopifnot(length(lambda_sp) == 1L, is.finite(lambda_sp), lambda_sp >= 0)
+  
+  loss_sum <- function(b) {
+    sum(loss_asymm(y - drop(X %*% b), k = k, c = cn))
   }
   
-  
-  # score_pop returns grad of -sum(loss); the loss gradient is its negative.
-  if (predictor != "X3"){
-    grad_loss <- function(b)
-      -score_pop(seq_len(P), b, y, X, k = k, c = cn, freq = 1,
-                 link = function(x) x,
-                 link_prime = function(x) rep(1, length(x)))
-  } else {
-    # If the predictor includes the spatial effect (i.e. X3) we need to add
-    # a term for the penalization. See also loss_sum above.
-    grad_loss <- function(b)
-      -score_pop(seq_len(P), b, y, X, k = k, c = cn, freq = 1,
-                 link = function(x) x,
-                 link_prime = function(x) rep(1, length(x))) +
-      2 * lambda_sp * b[spatial_idx]
+  grad_loss <- function(b) {
+    -drop(score_pop(seq_len(P), b, y, X, k = k, c = cn, freq = 1,
+                    link = function(x) x, link_prime = function(x) rep(1, length(x))))
   }
-  
   
   if (!is.null(seed)) set.seed(seed)   # determinism (esp. SANN)
   start <- med$coefficients
@@ -405,16 +437,16 @@ fit_nils_freq <- function(dat, predictor, seed = NULL) {
   
   estimates <- o$par
   variable_names <- switch(predictor,
-                           X1 = c("Intercept", "x1", "x2", 
-                                  paste0("x1.s", 1:D_SPLINE), 
-                                  paste0("x2.s", 1:D_SPLINE)),
-                           X2 = c("Intercept", "x1", "x2", 
-                                  paste0("x1.s", 1:D_SPLINE), 
-                                  paste0("x2.s", 1:D_SPLINE)),
-                           X3 = c("Intercept", "x1", "x2", 
-                                  paste0("x1.s", 1:D_SPLINE), 
-                                  paste0("x2.s", 1:D_SPLINE),
-                                  paste("gmrf", 1:dd$s)))
+                           X1 = c("Intercept",
+                                  paste0("x1.s", 1:(D_SPLINE+1)), 
+                                  paste0("x2.s", 1:(D_SPLINE+1))),
+                           X2 = c("Intercept",
+                                  paste0("x1.s", 1:(D_SPLINE+1)), 
+                                  paste0("x2.s", 1:(D_SPLINE+1))),
+                           X3 = c("Intercept",
+                                  paste0("x1.s", 1:(D_SPLINE+1)), 
+                                  paste0("x2.s", 1:(D_SPLINE+1)),
+                                  paste0("gmrf", 1:dd$s)))
   names(estimates) <- variable_names
   
   list(beta = estimates, fhat = as.vector(X %*% o$par),
@@ -556,10 +588,10 @@ run_cell <- function(dgp, predictor, n, replicate, seed_base = 0) {
   s   <- sim$seed
   
   # Designs retained and returned (resolves the previously-unused `design`).
-  designs <- list(m0 = make_design(dat, predictor, splines = TRUE),   # M0 
+  designs <- list(m0 = make_design_M0(dat, predictor, splines = TRUE),   # M0 
                   m1 = NULL, # M1 design is directly created in fit_bamlss_median
-                  m2 = make_design(dat, predictor, splines = FALSE),  # M2
-                  m3 = make_design(dat, predictor, splines = TRUE),   # M3 (equal to M0)
+                  m2 = make_design_M0(dat, predictor, splines = FALSE),  # M2
+                  m3 = make_design_M3(dat, predictor),     # M3
                   m4 = build_gud_design(dat))              # M4
   
   fits <- list(m0 = fit_nils_gbi(dat, predictor, "M0", seed = s),
