@@ -358,13 +358,34 @@ fit_nils_freq <- function(dat, predictor, seed = NULL) {
   k   <- c(kn / s12["s1"], kn / s12["s2"])
   P   <- ncol(X)
   
-  loss_sum  <- function(b) sum(loss_asymm(y - X %*% b, k = k, c = cn))
+  if (predictor != "X3"){
+    loss_sum  <- function(b) sum(loss_asymm(y - X %*% b, k = k, c = cn))
+  } else {
+    # If the predictor is X3, hence it includes the spatial effect,
+    # we need to add penalization term for neighboring structure.
+    # Since we use the MMR, the penalty matrix is diagonal, as the penalty
+    # is incorporated in the V vectors.
+    loss_sum  <- function(b) sum(loss_asymm(y - X %*% b, k = k, c = cn)) + 
+      lambda_sp * sum(b[spatial_idx]^2)
+  }
+  
   
   # score_pop returns grad of -sum(loss); the loss gradient is its negative.
-  grad_loss <- function(b)
-    -score_pop(seq_len(P), b, y, X, k = k, c = cn, freq = 1,
-               link = function(x) x,
-               link_prime = function(x) rep(1, length(x)))
+  if (predictor != "X3"){
+    grad_loss <- function(b)
+      -score_pop(seq_len(P), b, y, X, k = k, c = cn, freq = 1,
+                 link = function(x) x,
+                 link_prime = function(x) rep(1, length(x)))
+  } else {
+    # If the predictor includes the spatial effect (i.e. X3) we need to add
+    # a term for the penalization. See also loss_sum above.
+    grad_loss <- function(b)
+      -score_pop(seq_len(P), b, y, X, k = k, c = cn, freq = 1,
+                 link = function(x) x,
+                 link_prime = function(x) rep(1, length(x))) +
+      2 * lambda_sp * b[spatial_idx]
+  }
+  
   
   if (!is.null(seed)) set.seed(seed)   # determinism (esp. SANN)
   start <- med$coefficients
