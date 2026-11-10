@@ -24,7 +24,7 @@ library(posterior)   # posterior::draws (M1, M4)
 library(loo)         # ELPD selection (M4)
 library(quantreg)    # preliminary median fit (s1/s2, beta0)
 library(sdPrior)     # get_theta -> GMRF SDP scale
-library(HDInterval)  # hdi
+library(coda)        # hdi
 library(stringr)     # str_replace
 
 source("src/sim-study/01-dgp.R")    # generate_data, f_true, car_setup
@@ -56,7 +56,7 @@ MCMC_THIN   <- 1      # keep every 10th  => (11000-1000)/10 = 1000 draws
 # To make bamlss and construct_DR_basis coherent, both use a P-spline with k = D_SPLINE + 2 
 # and a 2nd-order difference penalty m = c(2, 2). D_SPLINE is the DR dimension (the
 # number of nonlinear basis functions), so the B-spline has D_SPLINE + 2 bases.
-D_SPLINE <- 10
+D_SPLINE <- 5
 
 # IWLS proposal smoothing. SF = 1 disables extra smoothing; k_deriv = k/SF.
 # (For wider exploration one may raise SF, but SF = 1 is the default.)
@@ -145,7 +145,7 @@ gmrf_design <- local({
 # X3 always adds the GMRF; X1/X2 never do.
 make_design <- function(dat, predictor, splines) {
   x1 <- dat$x1; x2 <- dat$x2
-  X_cont <- cbind(x1, x2)
+  X_cont <- scale(cbind(x1, x2))
   Z_cont <- NULL
   d <- c(0L, 0L)
   dr1 <- dr2 <- NULL
@@ -294,12 +294,12 @@ fit_nils_gbi <- function(dat, predictor, model_type, seed = NULL) {
                              X3 = c("Intercept", "x1", "x2", 
                                     paste0("x1.s", 1:D_SPLINE), 
                                     paste0("x2.s", 1:D_SPLINE),
-                                    paste("grmf", 1:dd$s)))
+                                    paste("gmrf", 1:dd$s)))
   } else if (model_type == "M2") {
     variable_names <- switch(predictor,
                              X1 = c("Intercept", "x1", "x2"),
                              X2 = c("Intercept", "x1", "x2"),
-                             X3 = c("Intercept", "x1", "x2", paste("grmf", 1:dd$s)))
+                             X3 = c("Intercept", "x1", "x2", paste("gmrf", 1:dd$s)))
   }
   
   
@@ -317,6 +317,7 @@ fit_bamlss_median <- function(dat, predictor, seed = NULL) {
                  X2 = y ~ s(x1) + s(x2),
                  X3 = y ~ s(x1) + s(x2) +
                    s(region, bs = "mrf", xt = list(penalty = gmrf_design$K)))
+  
   # bamlss self-initializes via its default posterior-mode optimizer (opt_bfit)
   # before the sampler; we do not inject our DR-basis coefficients as start.
   if (!is.null(seed)) set.seed(seed)
@@ -396,7 +397,7 @@ fit_nils_freq <- function(dat, predictor, seed = NULL) {
                            X3 = c("Intercept", "x1", "x2", 
                                   paste0("x1.s", 1:D_SPLINE), 
                                   paste0("x2.s", 1:D_SPLINE),
-                                  paste("grmf", 1:dd$s)))
+                                  paste("gmrf", 1:dd$s)))
   names(estimates) <- variable_names
   
   list(beta = estimates, fhat = as.vector(X %*% o$par),
@@ -409,11 +410,11 @@ fit_nils_freq <- function(dat, predictor, seed = NULL) {
 # Design for GUD. For X3 the spatial effect enters through the original region
 # factor (categorical), since GUD has no smooth GMRF term: 
 # X = model.matrix(~ x1 + x2 + region). For X1/X2 it is linear only.
-build_gud_design <- function(dat, predictor) {
-  if (predictor == "X3")
-    list(X = model.matrix(~ x1 + x2 + region, data = dat))
-  else
-    list(X = model.matrix(~ x1 + x2, data = dat))
+build_gud_design <- function(dat) {
+  dat_sc <- dat
+  dat_sc$x1 <- scale(dat$x1)
+  dat_sc$x2 <- scale(dat$x2)
+  list(X = model.matrix(~ x1 + x2, data = dat_sc))
 }
 
 modal_regression_loo <- function(X, N, y, model, seed, ...) {
@@ -427,21 +428,21 @@ modal_regression_loo <- function(X, N, y, model, seed, ...) {
   arr = posterior::as_draws(stanfit)
   draws = matrix(arr,
                  nrow = dim(arr)[1], ncol = dim(arr)[3])[ , substr(dimnames(arr)[3]$variable, 1, 4) == "beta"]
-  dimnames(draws) = list(iteration = 1:MCMC_NITER, variable = c("Intercept", "x1", "x2"))
   
   list(draws = draws, stanfit = stanfit)
 }
 
 # Retains ALL three GUD members (draws + ELPD) + the selected one.
 fit_gud <- function(dat, predictor, seed_base) {
-  X <- build_gud_design(dat, predictor)$X
+  X <- build_gud_design(dat)$X
   N <- nrow(X); y <- dat$y
   mods <- c("TPSC", "FG", "DTP")
   res <- lapply(seq_along(mods), function(j) {
     m  <- mods[j]
     fit <- modal_regression_loo(X, N, y, model = m, seed = seed_base + j,
                                 chains = 1, iter = MCMC_NITER+MCMC_BURNIN, warmup = MCMC_BURNIN,
-                                thin = MCMC_THIN)   # default init, seeded -> reproducible
+                                thin = MCMC_THIN,  # default init, seeded -> reproducible
+                                refresh = 0, verbose = FALSE, open_progress = FALSE, show_messages = FALSE)  
     elpd <- tryCatch(loo::loo(fit$stanfit)$estimates["elpd_loo", "Estimate"],
                      error = function(e) {
                        warning("loo() failed on ", m, ": ",
@@ -451,12 +452,17 @@ fit_gud <- function(dat, predictor, seed_base) {
   names(res) <- mods
   best <- mods[which.max(vapply(res, function(z) z$elpd, 0))]
   
-  all_draws <- lapply(res, function(z) setNames(z$fit$draws, c("Intercept", "x1", "x2")))
+  all_draws <- lapply(res, 
+                      function(z) {
+                        out <- z$fit$draws
+                        dimnames(out) <- list(iteration = 1:MCMC_NITER,
+                                              variable = c("Intercept", "x1", "x2"))
+                        out})
   draws <- all_draws[[best]]
   losing_draws <- all_draws[names(all_draws) != best]
   
-  list(draws = res[selected]$fit$draws,
-       losing_draws <- losing_draws,
+  list(draws = draws,
+       losing_draws = losing_draws,
        selected = best,
        elpd = setNames(vapply(res, function(z) z$elpd, 0), mods))
 }
@@ -537,7 +543,7 @@ run_cell <- function(dgp, predictor, n, replicate, seed_base = 0) {
                   m1 = NULL, # M1 design is directly created in fit_bamlss_median
                   m2 = make_design(dat, predictor, splines = FALSE),  # M2
                   m3 = make_design(dat, predictor, splines = TRUE),   # M3 (equal to M0)
-                  m4 = build_gud_design(dat, predictor))              # M4
+                  m4 = build_gud_design(dat))              # M4
   
   fits <- list(m0 = fit_nils_gbi(dat, predictor, "M0", seed = s),
                m1 = fit_bamlss_median(dat, predictor, seed = s + 1000),
