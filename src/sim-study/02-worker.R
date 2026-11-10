@@ -263,21 +263,17 @@ fit_nils_gbi <- function(dat, predictor, model_type, seed = NULL) {
   ntau <- dd$q + dd$p + (model_type == "M0")*dd$p + 1 * (dd$s > 0)
   a_tau <- rep(a_tau_default, ntau); b_tau <- rep(b_tau_default, ntau)
   
-  # RE-layer placeholder (option c): single neutral group. SWITCH HERE when
-  # the optional random-intercept mode is available.
-  id <- rep(1L, n); theta_re <- 1
-  
   fit <- MCMC_IWLS(niter = MCMC_NITER + MCMC_BURNIN,
                    X_dummy = NULL, X_cont = dd$X_cont, Z_cont = dd$Z_cont,
                    Z_spat = NULL, X_GMRF = dd$X_GMRF,
-                   id = id, y = y,
+                   id = NULL, y = y,
                    link = function(x) x,
                    link_prime = function(x) rep(1, length(x)),
                    link_second = function(x) rep(0, length(x)),
                    k = k, k_deriv = k_deriv, c = cn, c_deriv = c_deriv,
                    d = dd$d, beta0 = beta0,
                    a_tau = a_tau, b_tau = b_tau,
-                   theta_re = theta_re, theta_GMRF = dd$theta_GMRF, K_GMRF = dd$K_GMRF,
+                   theta_re = NULL, theta_GMRF = dd$theta_GMRF, K_GMRF = dd$K_GMRF,
                    verbose = 0, K_fold = 10, seed = seed)
   
   idx <- seq(MCMC_BURNIN + 1, MCMC_NITER + MCMC_BURNIN, by = MCMC_THIN)
