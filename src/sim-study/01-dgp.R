@@ -18,6 +18,11 @@
 #   * X3 adds a discrete spatial effect over the 20 Tanzania regions (from
 #     tanzania.gra). The region membership is drawn after x1, x2, eps so that
 #     it does not perturb the covariate/error stream shared with X1/X2.
+#   * Region is sampled i.i.d. as U(1:20) with replacement, i.e. uniform *in
+#     expectation*: each row is equally likely to belong to any region. The
+#     realized per-region counts in the kept n rows therefore follow a
+#     multinomial and are NOT forced to be balanced (a given replicate may
+#     look uneven; that is sampling noise, not bias).
 #
 # Errors (Var(eps) = 1 in all cases):
 #   D1  N(0,1)                                    (median-fair)
@@ -100,7 +105,8 @@ car_setup <- local({
   C0     <- chol2inv(chol(Q0))
   Sigma  <- VAR_REGION * cov2cor(C0)   # each region marginal var = VAR_REGION
   U      <- chol(Sigma)                # t(U) %*% U = Sigma
-  draw_gamma <- function() {
+  draw_gamma <- function(seed) {
+    set.seed(seed)
     setNames(drop(t(U) %*% rnorm(N_REGIONS)), rownames(L))
   }
   list(
@@ -143,35 +149,36 @@ generate_data <- function(dgp, predictor, n, replicate,
             predictor %in% c("X1", "X2", "X3"),
             n %in% c(250, 1000),
             n <= n_max)
-
-  # --- Seed depends only on (dgp, replicate) ---
-  dgp_idx  <- match(dgp, c("D1", "D2", "D3", "D4"))
-  seed     <- seed_base + (dgp_idx - 1L) * 1e2 + replicate
-  set.seed(seed)
-
-  # --- Draw covariates and errors for the full sample ---
-  x1  <- runif(n_max, -0.5, 0.5)
-  x2  <- runif(n_max, -0.5, 0.5)
-  eps <- error_draw(dgp, n_max)
-
-  # --- Spatial pieces (X3 only), drawn after x1/x2/eps so the
-  #     stream shared with X1/X2 is not perturbed ---
+  
+  # --- Spatial pieces (X3 only) ---
   gamma  <- NULL
   region <- NULL
   if (predictor == "X3") {
     region <- sample.int(N_REGIONS, n_max, replace = TRUE)
-    gamma  <- car_setup$draw_gamma()
+    gamma  <- car_setup$draw_gamma(1)
   }
-
-  # --- True function and response (full sample) ---
+  
+  # --- Seed depends only on (dgp, replicate) ---
+  dgp_idx  <- match(dgp, c("D1", "D2", "D3", "D4"))
+  seed     <- seed_base + (dgp_idx - 1L) * 1e2 + replicate
+  set.seed(seed)
+  
+  # --- Draw covariates and errors for the full sample ---
+  x1  <- runif(n_max, -0.5, 0.5)
+  x2  <- runif(n_max, -0.5, 0.5)
+  eps <- error_draw(dgp, n_max)
+  
+  # --- true function ---
   f0 <- f_true(predictor, x1, x2, gamma, region)
+  
+  # --- response (full sample) ---
   y  <- f0$f + eps
-
+  
   # --- Keep the first `n` rows (nesting: n=250 subset of n=1000) ---
   idx <- seq_len(n)
   dat <- data.frame(y = y[idx], x1 = x1[idx], x2 = x2[idx])
   if (predictor == "X3") dat$region <- factor(region[idx], levels = 1:20)
-
+  
   list(
     dat       = dat,
     f0        = lapply(f0, function(x) x[idx]),
@@ -198,17 +205,22 @@ if (FALSE) {
       density(e, n = 2^12)$y)])
   }
   sapply(c("D1", "D2", "D3", "D4"), chk)   # var ~ 1 in all cases
-
+  
   # Same stream across predictors within (d, r): x1/x2/eps identical.
   g1 <- generate_data("D2", "X1", 250, 1)
   g2 <- generate_data("D2", "X2", 250, 1)
   stopifnot(identical(g1$dat$x1, g2$dat$x1),
             identical(g1$dat$x2, g2$dat$x2),
             identical(g1$eps,     g2$eps))
-
+  
   # Nesting: n=250 is the first 250 rows of n=1000.
   g_full <- generate_data("D3", "X2", 1000, 2)
   g_sub  <- generate_data("D3", "X2", 250, 2)
   stopifnot(identical(unname(g_sub$dat$x1), unname(g_full$dat$x1[1:250])),
             identical(g_sub$eps, g_full$eps[1:250]))
+  
+  # Region nesting for X3: n=250 region is the first 250 of n=1000.
+  rg_full <- generate_data("D1", "X3", 1000, 2)
+  rg_sub  <- generate_data("D1", "X3", 250, 2)
+  stopifnot(identical(unname(rg_sub$region), unname(rg_full$region[1:250])))
 }
