@@ -46,9 +46,9 @@
 #'   covariate (nonlinear basis functions per smooth).
 #' @param beta0 Numeric vector of length P = 1 + q + p + sum(d) + s of starting
 #'   values for beta.
-#' @param a_tau Numeric vector (length q + 2*p + s) of inverse-gamma shape
+#' @param a_tau Numeric vector (length q + p+p_nonlin + s) of inverse-gamma shape
 #'   parameters for the block variances.
-#' @param b_tau Numeric vector (length q + 2*p + s) of inverse-gamma rate
+#' @param b_tau Numeric vector (length q + p+p_nonlin + s) of inverse-gamma rate
 #'   parameters for the block variances.
 #' @param theta_re Score of the SDP prior placed on the random-effects variance
 #'   sigma2_u (scale of the prior).
@@ -66,13 +66,13 @@
 #'
 #' @return A list with
 #'   \item{beta}{niter x P matrix of sampled coefficients (named as in X).}
-#'   \item{tau}{niter x (q + 2*p + s) matrix of sampled block standard deviations.}
+#'   \item{tau}{niter x (q + p+p_nonlin + s) matrix of sampled block standard deviations.}
 #'   \item{u}{niter x n_id matrix of sampled random intercepts.}
 #'   \item{sigma2u}{Vector (length niter) of sampled random-effects variances.}
 #'   \item{acc_prop}{List with per-block beta acceptance (`beta`), per-group
 #'     random-intercept acceptance (`re_u`) and random-effects-var acceptance
 #'     (`re_sigma2u`), each divided by niter.}
-#'   \item{logpost}{niter x (1 + q + 2*p + n_sp_up) matrix of log-full-conditionals.}
+#'   \item{logpost}{niter x (1 + q + p+p_nonlin + n_sp_up) matrix of log-full-conditionals.}
 #'   \item{w}{The estimated generalized-Bayes weight.}
 MCMC_IWLS <- function(niter,
                       X_dummy = NULL,
@@ -115,6 +115,7 @@ MCMC_IWLS <- function(niter,
   }
   # number of continuous covariates
   p = ncol(X_cont)
+  p_nonlin <- if (is.null(Z_cont)) 0L else p
   
   # number of spatial covariates
   if (!is.null(Z_spat)){
@@ -229,8 +230,8 @@ MCMC_IWLS <- function(niter,
   tau_idx <- c(
     if (q > 0) 1:q else integer(0),
     if (p > 0) (q + 1):(q + p) else integer(0),
-    if (p > 0) q + p + rep(seq_len(p), d) else integer(0),
-    if (s > 0) rep(q + 2 * p + 1, s) else integer(0)
+    if (p_nonlin > 0) q + p + rep(seq_len(p), d) else integer(0),
+    if (s > 0) rep(q + p + p_nonlin + 1, s) else integer(0)
   )
   
   # IG shape 
@@ -411,9 +412,9 @@ MCMC_IWLS <- function(niter,
           step = step/4
         )
         beta_curr <- up$beta
-        logpost_sample[m, 1+q+2*p+r] <- up$logpost
-        acc[1+q+2*p+r] <- acc[1+q+2*p+r] + up$accepted
-        acc_tmp[1+q+2*p+r] <- acc_tmp[1+q+2*p+r] + up$accepted
+        logpost_sample[m, 1+q+p+p_nonlin+r] <- up$logpost
+        acc[1+q+p+p_nonlin+r] <- acc[1+q+p+p_nonlin+r] + up$accepted
+        acc_tmp[1+q+p+p_nonlin+r] <- acc_tmp[1+q+p+p_nonlin+r] + up$accepted
       }
     }
     
@@ -437,9 +438,9 @@ MCMC_IWLS <- function(niter,
     #   step = step/4
     # )
     # beta_curr <- up$beta
-    # logpost_sample[m, 1+q+2*p+1] <- up$logpost
-    # acc[1+q+2*p+1] <- acc[1+q+2*p+1] + up$accepted
-    # acc_tmp[1+q+2*p+1] <- acc_tmp[1+q+2*p+1] + up$accepted
+    # logpost_sample[m, 1+q+p+p_nonlin+1] <- up$logpost
+    # acc[1+q+p+p_nonlin+1] <- acc[1+q+p+p_nonlin+1] + up$accepted
+    # acc_tmp[1+q+p+p_nonlin+1] <- acc_tmp[1+q+p+p_nonlin+1] + up$accepted
     
     ## --- Update for discrete spatial effect ---
     if (!is.null(X_GMRF)) {
@@ -463,9 +464,9 @@ MCMC_IWLS <- function(niter,
         step = step/4
       )
       beta_curr <- up$beta
-      logpost_sample[m, 1+q+2*p+1] <- up$logpost
-      acc[1+q+2*p+1] <- acc[1+q+2*p+1] + up$accepted
-      acc_tmp[1+q+2*p+1] <- acc_tmp[1+q+2*p+1] + up$accepted
+      logpost_sample[m, 1+q+p+p_nonlin+1] <- up$logpost
+      acc[1+q+p+p_nonlin+1] <- acc[1+q+p+p_nonlin+1] + up$accepted
+      acc_tmp[1+q+p+p_nonlin+1] <- acc_tmp[1+q+p+p_nonlin+1] + up$accepted
       
     }
     
@@ -609,9 +610,9 @@ MCMC_IWLS <- function(niter,
 #' @param d Integer vector of length p with the DR dimension per covariate
 #'   (number of nonlinear basis functions per smooth).
 #' @param beta0 Numeric vector of length P with starting values for beta.
-#' @param a_tau Numeric vector (length 2*p) of inverse-gamma shape parameters
+#' @param a_tau Numeric vector (length p+p_nonlin) of inverse-gamma shape parameters
 #'   for the block variances.
-#' @param b_tau Numeric vector (length 2*p) of inverse-gamma rate parameters.
+#' @param b_tau Numeric vector (length p+p_nonlin) of inverse-gamma rate parameters.
 #' @param debug Logical, reserved for extra diagnostics (currently unused).
 #' @param verbose Integer verbosity level: 0 quiet, 1 progress by 10% steps,
 #'   2 per-`print_step` summaries.
@@ -622,7 +623,7 @@ MCMC_IWLS <- function(niter,
 #'
 #' @return A list with
 #'   \item{beta}{niter x P matrix of sampled coefficients (named columns).}
-#'   \item{tau}{niter x (2*p) matrix of sampled block standard deviations.}
+#'   \item{tau}{niter x (p+p_nonlin) matrix of sampled block standard deviations.}
 #'   \item{acc_prop}{Vector of per-block acceptance rates.}
 #'   \item{logpost}{niter x (1+p) matrix of log-full-conditionals per update.}
 #'   \item{w}{The estimated generalized-Bayes weight.}
