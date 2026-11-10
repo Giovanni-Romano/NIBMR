@@ -115,11 +115,12 @@ loss_asymm_pop = function(beta, y, X, k, c, g = 1, link = function(x) x){
 #' @param freq Numeric vector of observation weights (default all 1).
 #' @param link Link function mapping the linear predictor to mu.
 #' @param link_prime First derivative of the link function.
+#' @param offset Optional linear predictor offset (e.g. presence of random effects).
 #'
 #' @return Numeric vector of length length(idx): the gradient of the
 #'   log-likelihood with respect to the selected coefficients.
-score_pop = function(idx, beta, y, X, k, c, freq = 1, link, link_prime){
-  eta = drop(X %*% beta)
+score_pop = function(idx, beta, y, X, k, c, freq = 1, link, link_prime, offset = 0){
+  eta = drop(X %*% beta) + offset
   eps = y - link(eta)
   k_vec = k[(eps>0)+1]
   u = k_vec*eps
@@ -154,12 +155,13 @@ score_pop = function(idx, beta, y, X, k, c, freq = 1, link, link_prime){
 #' @param link Link function.
 #' @param link_prime First derivative of the link function.
 #' @param link_second Second derivative of the link function.
+#' @param offset Optional linear predictor offset (e.g. presence of random effects).
 #'
 #' @return Numeric vector of length length(idx): the diagonal of the Hessian of
 #'   the log-likelihood with respect to the selected coefficients.
 H_pop = function(idx, beta, y, X, X2, k, c, freq = 1, 
-                 link, link_prime, link_second){
-  eta = drop(X %*% beta)
+                 link, link_prime, link_second, offset = 0){
+  eta = drop(X %*% beta) + offset
   eps = (y - link(eta))
   k_vec = k[(eps>0)+1]
   u = k_vec*eps
@@ -658,10 +660,14 @@ eval_logfullcond_beta <- function(idx, beta,
   r <- drop(y - link(eta))
   loglik <- -w * sum(freq * loss_fun(r, k = k_post, c = c_post))
   
-  grad_ll = w * score_pop(idx = idx, beta = beta, y = y, X = X, k = k_deriv, c = c_deriv, freq = freq,
-                          link = link, link_prime = link_prime) 
-  H_ll = w * H_pop(idx = idx, beta = beta, y = y, X = X, X2 = X2, k = k_deriv, c = c_deriv, freq = freq,
-                   link = link, link_prime = link_prime, link_second = link_second)
+  grad_ll = w * score_pop(idx = idx, beta = beta, y = y, X = X, 
+                          k = k_deriv, c = c_deriv, freq = freq,
+                          link = link, link_prime = link_prime,
+                          offset = u) 
+  H_ll = w * H_pop(idx = idx, beta = beta, y = y, X = X, X2 = X2, 
+                   k = k_deriv, c = c_deriv, freq = freq,
+                   link = link, link_prime = link_prime, link_second = link_second, 
+                   offset = u)
   
   # --- Gaussian prior ---
   # No prior on intercept beta[1]
@@ -733,12 +739,14 @@ eval_logfullcond_re <- function(y, fe, u,
   grad_ll = w * score_pop(idx = 1, beta = u, 
                           y = y, X = matrix(rep(1, length(y)), ncol = 1), freq = freq,
                           k = k_deriv, c = c_deriv, 
-                          link = link, link_prime = link_prime) 
+                          link = link, link_prime = link_prime,
+                          offset = fe) 
   H_ll = w * H_pop(idx = 1, beta = u, 
                    y = y, X = matrix(rep(1, length(y)), ncol = 1), 
                    X2 = matrix(rep(1, length(y)), ncol = 1), freq = freq,
                    k = k_deriv, c = c_deriv, 
-                   link = link, link_prime = link_prime, link_second = link_second)
+                   link = link, link_prime = link_prime, link_second = link_second,
+                   offset = fe)
   
   # --- Gaussian prior ---
   Omega <- 1 / (sigma2_u)
