@@ -511,12 +511,12 @@ MCMC_IWLS <- function(niter,
       # spatial variance with the Scale-Dependent Prior (Klein & Kneib 2016)
       # instead of the inverse-gamma full conditional. All other blocks keep
       # their conjugate IG full conditional.
-      if (s > 0 && j == q + p + p*(!is.null(Z_cont)) + 1 && !is.null(X_GMRF)) {
+      if (s > 0 && j == (q + p + p*(!is.null(Z_cont)) + 1) && !is.null(X_GMRF)) {
         if (is.null(theta_GMRF)) stop("theta_GMRF required when X_GMRF is supplied")
         up_tau <- iwls_SDP_update(
           log_tau2 = log(tau[j]^2),
           K = K_GMRF, rank_K = s,
-          beta = beta_curr[q + p + sum(d) + 1:s], theta = theta_GMRF
+          beta = beta_curr[1 + q + p + sum(d) + 1:s], theta = theta_GMRF
         )
         var_sample <- exp(up_tau$log_tau2)      # tau[j]^2 on original scale
         acc_spat_sdp <- acc_spat_sdp + up_tau$accepted
