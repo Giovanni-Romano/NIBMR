@@ -177,7 +177,7 @@ make_design_M3 <- function(dat, predictor) {
   predictor <- match.arg(predictor, c("X1", "X2", "X3"))
   
   make_bs <- function(x) {
-    mgcv::smoothCon(mgcv::s(x, bs = "ps", k = D_SPLINE + 2L, m = c(2, 2)),
+    mgcv::smoothCon(mgcv::s(x, bs = "bs", k = D_SPLINE + 2L, m = c(2, 2)),
                     data = data.frame(x = x),
                     absorb.cons = TRUE, scale.penalty = FALSE)[[1L]]
   }
@@ -185,8 +185,8 @@ make_design_M3 <- function(dat, predictor) {
   bs1 <- make_bs(dat$x1)
   bs2 <- make_bs(dat$x2)
   
-  B1 <- bs1$X; colnames(B1) <- paste0("x1.bs", seq_len(ncol(B1)))
-  B2 <- bs2$X; colnames(B2) <- paste0("x2.bs", seq_len(ncol(B2)))
+  B1 <- bs1$X
+  B2 <- bs2$X
   
   R <- matrix(numeric(0), nrow = nrow(dat), ncol = 0L)
   region_levels <- region_contrasts <- NULL
@@ -374,16 +374,16 @@ fit_bamlss_median <- function(dat, predictor, seed = NULL) {
   draws <- out$B
   
   variable_names <- colnames(out$B)
-  variable_names <- stringr::str_replace(variable_names, 
-                                         pattern = fixed("mu.p.(Intercept)"), replacement = "Intercept")
-  variable_names <- stringr::str_replace(variable_names, 
-                                         pattern = fixed("mu.s.s(x1)"), replacement = "x1")
-  variable_names <- stringr::str_replace(variable_names, 
-                                         pattern = fixed("mu.s.s(x2)"), replacement = "x2")
-  variable_names <- stringr::str_replace(variable_names, 
-                                         pattern = ".b", replacement = ".s")
-  variable_names <- stringr::str_replace(variable_names, 
-                                         pattern = "mu.s.s(region).x", replacement = "gmrf")
+  variable_names <- str_replace(variable_names, 
+                                pattern = fixed("mu.p.(Intercept)"), replacement = "Intercept")
+  variable_names <- str_replace(variable_names, 
+                                pattern = fixed("mu.s.s(x1)"), replacement = "x1")
+  variable_names <- str_replace(variable_names, 
+                                pattern = fixed("mu.s.s(x2)"), replacement = "x2")
+  variable_names <- str_replace(variable_names, 
+                                pattern = fixed(".b"), replacement = ".s")
+  variable_names <- str_replace(variable_names, 
+                                pattern = fixed("mu.s.s(region).x"), replacement = "gmrf")
   
   dimnames(draws) <- list(iteration = 1:MCMC_NITER, 
                           variable = variable_names)
@@ -394,8 +394,8 @@ fit_bamlss_median <- function(dat, predictor, seed = NULL) {
        fit = fit)
 }
 
-## M3 : frequentist NIL (same loss & design as M0) ----
-fit_nils_freq <- function(dat, predictor, seed = NULL, lambda_sp = 0) {
+## M3 : frequentist NIL ----
+fit_nils_freq <- function(dat, predictor, seed = NULL) {
   dd <- make_design_M3(dat, predictor)
   
   n <- nrow(dat); y <- dat$y; X <- dd$X
@@ -404,11 +404,6 @@ fit_nils_freq <- function(dat, predictor, seed = NULL, lambda_sp = 0) {
   s12 <- est_s1_s2(as.vector(X %*% med$coefficients - y))
   k   <- c(kn / s12["s1"], kn / s12["s2"])
   P   <- ncol(X)
-  
-  # Spatial coefficients are the final dd$s columns of X.
-  spatial_idx <- if (dd$s > 0L) {seq.int(P - dd$s + 1L, P)} else {integer(0)}
-  
-  stopifnot(length(lambda_sp) == 1L, is.finite(lambda_sp), lambda_sp >= 0)
   
   loss_sum <- function(b) {
     sum(loss_asymm(y - drop(X %*% b), k = k, c = cn))

@@ -64,6 +64,8 @@ results_on_train <- function(s, xval_l = -0.5, xval_u = 0.5, xval_N = 100, probs
   
   res <- list()
   
+  cred_mass = probs[2] - probs[1]
+  
   for (mod in models){
     
     if (mod == "m3"){
@@ -107,8 +109,8 @@ results_on_train <- function(s, xval_l = -0.5, xval_u = 0.5, xval_N = 100, probs
       bs1 <- des[[mod]]$bs1
       bs2 <- des[[mod]]$bs2
       
-      new_B1 <- Predict.matrix(bs1, data.frame(x = new_x))
-      new_B2 <- Predict.matrix(bs2, data.frame(x = new_x))
+      new_B1 <- PredictMat(bs1, data.frame(x = new_x))
+      new_B2 <- PredictMat(bs2, data.frame(x = new_x))
       
       new_X <- cbind(1, new_B1, new_B2)
     }
@@ -128,8 +130,7 @@ results_on_train <- function(s, xval_l = -0.5, xval_u = 0.5, xval_N = 100, probs
                         f1L = x1L_idx, f1NL = x1NL_idx, f1 = c(x1L_idx, x1NL_idx),
                         f2L = x2L_idx, f2NL = x2NL_idx, f2 = c(x2L_idx, x2NL_idx),
                         spat = spat_idx)
-    effects_idx[["fcont"]] <- c(effects_idx$int, 
-                                effects_idx$f1, effects_idx$f2)
+    effects_idx[["fcont"]] <- c(effects_idx$f1, effects_idx$f2)
     effects_idx[["f"]] <- c(effects_idx$fcont, effects_idx$spat)
     
     effects_idx <- lapply(effects_idx, function(x) if (length(x) == 0) NULL else x)
@@ -157,7 +158,7 @@ results_on_train <- function(s, xval_l = -0.5, xval_u = 0.5, xval_N = 100, probs
             pe <- mean(D)
             pe_grid <- mean(D_grid) 
             quant <- quantile(D_grid, probs = probs)
-            hpd <- HPDinterval(as.mcmc(D_grid), prob = probs[1] + (1-probs[2]))
+            hpd <- HPDinterval(as.mcmc(D_grid), prob = cred_mass)
             names(quant) <- names(hpd) <- c("LB", "UP")
             
             # Save
@@ -172,7 +173,7 @@ results_on_train <- function(s, xval_l = -0.5, xval_u = 0.5, xval_N = 100, probs
             pe <- colMeans(D)
             pe_grid <- colMeans(D_grid)
             quant <- t(apply(D_grid, 2, quantile, probs = probs))
-            hpd <- HPDinterval(as.mcmc(D_grid), prob = probs[1] + (1-probs[2]))
+            hpd <- HPDinterval(as.mcmc(D_grid), prob = cred_mass)
             colnames(quant) <- colnames(hpd) <- c("LB", "UP")
             
             # Save
@@ -187,7 +188,7 @@ results_on_train <- function(s, xval_l = -0.5, xval_u = 0.5, xval_N = 100, probs
             pe <- point_est$f1 + point_est$f2
             pe_grid <- point_est_grid$f1 + point_est_grid$f2
             quant <- t(apply(D_grid, 2, quantile, probs = probs))
-            hpd <- HPDinterval(as.mcmc(D_grid), prob = probs[1] + (1-probs[2]))
+            hpd <- HPDinterval(as.mcmc(D_grid), prob = cred_mass)
             colnames(quant) <- colnames(hpd) <- c("LB", "UP")
             
             # Save
@@ -205,7 +206,7 @@ results_on_train <- function(s, xval_l = -0.5, xval_u = 0.5, xval_N = 100, probs
             pe <- colMeans(D)
             pe_grid <- colMeans(D_grid)
             quant <- t(apply(D_grid, 2, quantile, probs = probs))
-            hpd <- HPDinterval(as.mcmc(D_grid), prob = probs[1] + (1-probs[2]))
+            hpd <- HPDinterval(as.mcmc(D_grid), prob = cred_mass)
             colnames(quant) <- colnames(hpd) <- c("LB", "UP")
             
             # Save
@@ -222,12 +223,18 @@ results_on_train <- function(s, xval_l = -0.5, xval_u = 0.5, xval_N = 100, probs
             } else {
               # Compute
               D <- D_eff$spat + D_eff$fcont
-              D_grid <- apply(D_eff_grid$spat, 2, function(x) x + D_eff_grid$fcont)
+              D_grid <- apply(D_eff_grid$spat, 2, function(x) x + D_eff_grid$fcont, simplify = F)
               pe <- point_est$fcont + point_est$spat
               pe_grid <- lapply(point_est_grid$spat, function(x) x + point_est_grid$fcont)
-              quant <- t(apply(D_grid, 2, quantile, probs = probs))
-              hpd <- HPDinterval(as.mcmc(D_grid), prob = probs[1] + (1-probs[2]))
-              colnames(quant) <- colnames(hpd) <- c("LB", "UP")
+              quant <- lapply(D_grid, function(z){
+                ans <- t(apply(z, 2L, quantile, probs = probs))
+                colnames(ans) <- c("LB", "UP")
+                rownames(ans) <- NULL
+                ans})
+              hpd <- hpd <- lapply(D_grid, function(z) {
+                ans <- coda::HPDinterval(coda::as.mcmc(z), prob = cred_mass)
+                colnames(ans) <- c("LB", "UP")
+                ans})
               
               # Save
               D_eff[[eff]] <- D; D_eff_grid[[eff]] <- D_grid
@@ -241,10 +248,11 @@ results_on_train <- function(s, xval_l = -0.5, xval_u = 0.5, xval_N = 100, probs
       
       res[[mod]] <- list(point_est = point_est, point_est_grid = point_est_grid,
                          CI_quant = CI_quant, CI_hpd = CI_hpd)
+      
     } else if (mod == "m3") {
       
       point_est <- point_est_grid <- CI_freq <- vector(mode = "list", length = length(effects_idx))
-      names(point_est) <- names(point_est_grid) <- names(CI_freq) <- names(CI_freq) <- names(effects_idx)
+      names(point_est) <- names(point_est_grid) <- names(CI_quant) <- names(CI_quant) <- names(effects_idx)
       
       D_eff <- D_eff_grid <- vector(mode = "list", length = length(effects_idx))
       names(D_eff) <- names(D_eff_grid) <- names(effects_idx)
@@ -299,7 +307,7 @@ results_on_train <- function(s, xval_l = -0.5, xval_u = 0.5, xval_N = 100, probs
           } else if (eff == "spat"){
             # Compute
             D <- drop(draws[ , eff_idx] %*% t(X[ , eff_idx]))
-            D_grid <- drop(draws[ , eff_idx])
+            D_grid <- drop(des[[mod]]$region_contrasts %*% as.numeric(draws[, eff_idx]))
             pe <- D
             pe_grid <- D_grid
             quant <- boot_CI() # still to be implemented
@@ -314,7 +322,6 @@ results_on_train <- function(s, xval_l = -0.5, xval_u = 0.5, xval_N = 100, probs
               D_eff[[eff]] <- D_eff[["fcont"]]; D_eff_grid[[eff]] <- D_eff[["fcont"]]
               point_est[[eff]] <- point_est[["fcont"]]; point_est_grid[[eff]] <- point_est_grid[["fcont"]]
               CI_quant[[eff]] <- CI_quant[["fcont"]]
-              CI_hpd[[eff]] <- CI_hpd[["fcont"]]
             } else {
               # Compute
               D <- D_eff$spat + D_eff$fcont
