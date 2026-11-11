@@ -177,7 +177,7 @@ make_design_M3 <- function(dat, predictor) {
   predictor <- match.arg(predictor, c("X1", "X2", "X3"))
   
   make_bs <- function(x) {
-    mgcv::smoothCon(mgcv::s(x, bs = "bs", k = D_SPLINE + 2L, m = c(2, 2)),
+    mgcv::smoothCon(mgcv::s(x, bs = "ps", k = D_SPLINE + 2L, m = c(2, 2)),
                     data = data.frame(x = x),
                     absorb.cons = TRUE, scale.penalty = FALSE)[[1L]]
   }
