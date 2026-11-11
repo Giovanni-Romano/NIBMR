@@ -55,35 +55,44 @@ results_on_train <- function(s, xval_l = -0.5, xval_u = 0.5, xval_N = 100, probs
   stopifnot("Models in fits should match those in designs. The names of the two objects do not coincide." =  
               all(names(s$fits) == names(s$designs)))
   
+  # Extract main objects
   pred <- s$scenario$predictor
   dat <- s$scenario$dat
   des <- s$designs
   models <- names(s$fits)
   
-  new_x <- seq(xval_l, xval_u, length = xval_N)
+  # Helpers for spatial effects
+  region_levels <- levels(dat$region)
+  region_id <- match(as.character(dat$region), region_levels)
+  ## One observation representing each region, in factor-level order.
+  first_row <- match(region_levels, as.character(dat$region))
+  if (anyNA(first_row)) {stop("Regional extraction requires every region to be observed.")}
   
-  # Ordering agrees with as.vector(outer(f1, f2, "+")):
-  # x1 varies fastest, then x2.
+  # Define values for the fit on the grid (will be used both for x1 and x2)
+  new_x <- seq(xval_l, xval_u, length = xval_N)
+  ## Helpers to compute surface-type effects, since f(x1, x2) is defined on R^2
+  ### Ordering agrees with as.vector(outer(f1, f2, "+")): x1 varies fastest, then x2.
   grid_i1 <- rep(seq_len(xval_N), times = xval_N)
   grid_i2 <- rep(seq_len(xval_N), each = xval_N)
-  
   grid_names <- list(x1 = as.character(new_x), x2 = as.character(new_x))
-  
-  # Convert G^2 values into an x1-by-x2 surface.
+  ### Convert xval_N^2 values into an x1-by-x2 surface.
   as_surface <- function(z) {
     stopifnot(length(z) == xval_N * xval_N)
     matrix(z, nrow = xval_N, ncol = xval_N, dimnames = grid_names)
   }
-  
-  # Convert a G^2-by-2 interval matrix into a surface of intervals.
+  ### Convert a (xval_N^2)-by-2 CI matrix into a surface of intervals.
   as_interval_surface <- function(z) {
     stopifnot(nrow(z) == xval_N * xval_N, ncol(z) == 2L)
     array(as.numeric(z), dim = c(xval_N, xval_N, 2L), dimnames = c(grid_names, list(bound = c("LB", "UP"))))
   }
   
+  # Define nominal level from probs
+  cred_mass = probs[2] - probs[1]
+  
+  # Container for results
   res <- list()
   
-  cred_mass = probs[2] - probs[1]
+  
   
   for (mod in models){
     
@@ -100,6 +109,26 @@ results_on_train <- function(s, xval_l = -0.5, xval_u = 0.5, xval_N = 100, probs
     
     new_xtilde1 <- (new_x - mean(dat[ , "x1"]))/sd(dat[ , "x1"])
     new_xtilde2 <- (new_x - mean(dat[ , "x2"]))/sd(dat[ , "x2"])
+    
+    # The smooth constructor for GMRF in mgcv uses a constraint on the spatial
+    # effect that differs from the one used in M0/M2. This mines the comparison
+    # of the estimates across models.
+    # Define "gamma_r" and "n_r" as the effect and the number of observations in region r.
+    # M0/M2 use equal-region centering, meaning that sum_{r = 1}^s gamma_r = 0.
+    # M1 uses weighted centering, meaning that       sum_{r = 1}^s n_r gamma_r = 0.
+    # Here we express M1 spatial effects under equal-region centering.
+    if (mod == "m1" && pred == "X3") {
+      spatial_idx <- grep("^gmrf", colnames(draws))
+      intercept_idx <- match("Intercept", colnames(draws))
+      stopifnot(length(spatial_idx) > 0L, !is.na(intercept_idx), !anyNA(first_row))
+      
+      # Mean regional basis row; each draw's shift is b %*% a.
+      a <- colMeans(X[first_row, spatial_idx, drop = FALSE])
+      shift <- drop(draws[, spatial_idx, drop = FALSE] %*% a)
+      
+      draws[, intercept_idx] <- draws[, intercept_idx] + shift
+      X[, spatial_idx] <- sweep(X[, spatial_idx, drop = FALSE], 2L, a, "-")
+      }
     
     if (mod == "m0"){
       dr1 <- des[[mod]]$dr1
@@ -216,11 +245,32 @@ results_on_train <- function(s, xval_l = -0.5, xval_u = 0.5, xval_N = 100, probs
             CI_hpd[[eff]] <- hpd
           } else if (eff == "spat"){
             # Compute
-            reg <- dat$region
-            V <- X[ , eff_idx]
-            uV <- unique(V[order(reg), ])
-            D <- draws[ , eff_idx] %*% t(V)
-            D_grid <- draws[ , eff_idx] %*% t(uV)
+            V <- X[, eff_idx, drop = FALSE]
+            ## Extract one row for each region, in factor-level (i.e. region) order
+            V_region <- V[first_row, , drop = FALSE]
+            rownames(V_region) <- region_levels
+            D_region <- draws[, eff_idx, drop = FALSE]
+            D <- D_region %*% t(V)
+            D_grid <- D_region %*% t(V_region)
+            colnames(D_grid) <- region_levels
+            
+            # Couple of checks
+            ## Every observation must use its region's design row.
+            stopifnot(isTRUE(all.equal(unname(V), unname(V_region[region_id, , drop = FALSE]))))
+            ## Regional reconstruction must reproduce observation-level effects.
+            stopifnot(isTRUE(all.equal(unname(D), unname(D_grid[, region_id, drop = FALSE]))))
+            
+            counts <- tabulate(region_id, nbins = length(region_levels))
+            
+            centering_check <- c(
+              equal_region = max(abs(colMeans(V_region))),
+              observation_weighted = max(abs(
+                drop(crossprod(counts / sum(counts), V_region))
+              ))
+            )
+            
+            print(list(model = mod, centering = centering_check))
+            
             pe <- colMeans(D)
             pe_grid <- colMeans(D_grid)
             quant <- t(apply(D_grid, 2, quantile, probs = probs))
@@ -359,7 +409,6 @@ results_on_train <- function(s, xval_l = -0.5, xval_u = 0.5, xval_N = 100, probs
     }
     
     pg <- res[[mod]]$point_est_grid
-    
     stopifnot(isTRUE(all.equal(unname(pg$fcont), unname(outer(pg$f1, pg$f2, "+")))))
     
     if (!is.null(effects_idx$spat)) {
