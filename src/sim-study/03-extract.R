@@ -231,7 +231,7 @@ results_on_train <- function(s, xval_l = -0.5, xval_u = 0.5, xval_N = 100, probs
                 colnames(ans) <- c("LB", "UP")
                 rownames(ans) <- NULL
                 ans})
-              hpd <- hpd <- lapply(D_grid, function(z) {
+              hpd <- lapply(D_grid, function(z) {
                 ans <- coda::HPDinterval(coda::as.mcmc(z), prob = cred_mass)
                 colnames(ans) <- c("LB", "UP")
                 ans})
