@@ -251,7 +251,7 @@ results_on_train <- function(s, xval_l = -0.5, xval_u = 0.5, xval_N = 100, probs
       
     } else if (mod == "m3") {
       
-      point_est <- point_est_grid <- CI_freq <- vector(mode = "list", length = length(effects_idx))
+      point_est <- point_est_grid <- CI_quant <- vector(mode = "list", length = length(effects_idx))
       names(point_est) <- names(point_est_grid) <- names(CI_quant) <- names(CI_quant) <- names(effects_idx)
       
       D_eff <- D_eff_grid <- vector(mode = "list", length = length(effects_idx))
