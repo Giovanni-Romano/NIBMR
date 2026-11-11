@@ -15,14 +15,18 @@
 #     once; the n = 250 setting uses the first 250 rows. This nests the smaller
 #     sample in the larger one ("information coherence") and avoids sampling
 #     twice.
-#   * X3 adds a discrete spatial effect over the 20 Tanzania regions (from
-#     tanzania.gra). The region membership is drawn after x1, x2, eps so that
-#     it does not perturb the covariate/error stream shared with X1/X2.
-#   * Region is sampled i.i.d. as U(1:20) with replacement, i.e. uniform *in
-#     expectation*: each row is equally likely to belong to any region. The
-#     realized per-region counts in the kept n rows therefore follow a
-#     multinomial and are NOT forced to be balanced (a given replicate may
-#     look uneven; that is sampling noise, not bias).
+#   * X3 adds a discrete spatial effect over the 20 Tanzania regions
+#     (from tanzania.gra). The gamma vector is generated with seed 1
+#     and held fixed across DGPs, predictors, and replicates.
+#   * Region assignments are generated after x1, x2, eps, preserving
+#     the covariate/error stream shared across predictors.
+#   * The complete region vector is constructed independently of n:
+#     the first 250 assignments and the remaining assignments are
+#     randomly permuted separately. Calls with the same scenario seed
+#     and n_max therefore have identical first-250 assignments.
+#   * With n_max = 1000, every region has exactly 50 observations.
+#     Among the first 250 observations, regions 1-10 have 13 each
+#     and regions 11-20 have 12 each.
 #
 # Errors (Var(eps) = 1 in all cases):
 #   D1  N(0,1)                                    (median-fair)
@@ -154,7 +158,6 @@ generate_data <- function(dgp, predictor, n, replicate,
   gamma  <- NULL
   region <- NULL
   if (predictor == "X3") {
-    region <- sample.int(N_REGIONS, n_max, replace = TRUE)
     gamma  <- car_setup$draw_gamma(1)
   }
   
@@ -167,6 +170,23 @@ generate_data <- function(dgp, predictor, n, replicate,
   x1  <- runif(n_max, -0.5, 0.5)
   x2  <- runif(n_max, -0.5, 0.5)
   eps <- error_draw(dgp, n_max)
+  # I sample the region *after* x1, x2, eps so that the covariate/error stream is identical across X1/X2/X3.
+  if (predictor == "X3") {
+    # Construct the full allocation independently of the requested n.
+    n_first <- 250L
+    reg_val <- rep(seq_len(N_REGIONS), length.out = n_max)
+    region <- integer(n_max)
+    
+    # First block: balanced allocation for the smaller sample.
+    first_idx <- seq_len(n_first)
+    region[first_idx] <- reg_val[first_idx][sample.int(length(first_idx))]
+    
+    # Remaining observations: complementary allocation.
+    if (n_max > n_first) {
+      rest_idx <- seq.int(n_first + 1L, n_max)
+      region[rest_idx] <- reg_val[rest_idx][sample.int(length(rest_idx))]
+    }
+  }
   
   # --- true function ---
   f0 <- f_true(predictor, x1, x2, gamma, region)
