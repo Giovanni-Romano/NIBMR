@@ -62,6 +62,25 @@ results_on_train <- function(s, xval_l = -0.5, xval_u = 0.5, xval_N = 100, probs
   
   new_x <- seq(xval_l, xval_u, length = xval_N)
   
+  # Ordering agrees with as.vector(outer(f1, f2, "+")):
+  # x1 varies fastest, then x2.
+  grid_i1 <- rep(seq_len(xval_N), times = xval_N)
+  grid_i2 <- rep(seq_len(xval_N), each = xval_N)
+  
+  grid_names <- list(x1 = as.character(new_x), x2 = as.character(new_x))
+  
+  # Convert G^2 values into an x1-by-x2 surface.
+  as_surface <- function(z) {
+    stopifnot(length(z) == xval_N * xval_N)
+    matrix(z, nrow = xval_N, ncol = xval_N, dimnames = grid_names)
+  }
+  
+  # Convert a G^2-by-2 interval matrix into a surface of intervals.
+  as_interval_surface <- function(z) {
+    stopifnot(nrow(z) == xval_N * xval_N, ncol(z) == 2L)
+    array(as.numeric(z), dim = c(xval_N, xval_N, 2L), dimnames = c(grid_names, list(bound = c("LB", "UP"))))
+  }
+  
   res <- list()
   
   cred_mass = probs[2] - probs[1]
@@ -184,16 +203,15 @@ results_on_train <- function(s, xval_l = -0.5, xval_u = 0.5, xval_N = 100, probs
           } else if (eff == "fcont"){
             # Compute
             D <- D_eff$f1 + D_eff$f2
-            D_grid <- D_eff_grid$f1 + D_eff_grid$f2
+            D_grid <- D_eff_grid$f1[, grid_i1, drop = FALSE] + D_eff_grid$f2[, grid_i2, drop = FALSE]
             pe <- point_est$f1 + point_est$f2
-            pe_grid <- point_est_grid$f1 + point_est_grid$f2
-            quant <- t(apply(D_grid, 2, quantile, probs = probs))
-            hpd <- HPDinterval(as.mcmc(D_grid), prob = cred_mass)
-            colnames(quant) <- colnames(hpd) <- c("LB", "UP")
+            pe_grid <- as_surface(colMeans(D_grid))
+            quant <- as_interval_surface(t(apply(D_grid, 2, quantile, probs = probs)))
+            hpd <- as_interval_surface(HPDinterval(as.mcmc(D_grid), prob = cred_mass))
             
             # Save
             D_eff[[eff]] <- D; D_eff_grid[[eff]] <- D_grid
-            point_est[[eff]] <- unname(pe); point_est_grid[[eff]] <- unname(pe_grid)
+            point_est[[eff]] <- unname(pe); point_est_grid[[eff]] <- pe_grid
             CI_quant[[eff]] <- quant
             CI_hpd[[eff]] <- hpd
           } else if (eff == "spat"){
@@ -223,22 +241,15 @@ results_on_train <- function(s, xval_l = -0.5, xval_u = 0.5, xval_N = 100, probs
             } else {
               # Compute
               D <- D_eff$spat + D_eff$fcont
-              D_grid <- apply(D_eff_grid$spat, 2, function(x) x + D_eff_grid$fcont, simplify = F)
+              D_grid <- apply(D_eff_grid$spat, 2L, function(x) x + D_eff_grid$fcont, simplify = FALSE)
               pe <- point_est$fcont + point_est$spat
-              pe_grid <- lapply(point_est_grid$spat, function(x) x + point_est_grid$fcont)
-              quant <- lapply(D_grid, function(z){
-                ans <- t(apply(z, 2L, quantile, probs = probs))
-                colnames(ans) <- c("LB", "UP")
-                rownames(ans) <- NULL
-                ans})
-              hpd <- lapply(D_grid, function(z) {
-                ans <- coda::HPDinterval(coda::as.mcmc(z), prob = cred_mass)
-                colnames(ans) <- c("LB", "UP")
-                ans})
+              pe_grid <- lapply(D_grid, function(z) {as_surface(colMeans(z))})
+              quant <- lapply(D_grid, function(z) {as_interval_surface(t(apply(z, 2L, quantile, probs = probs)))})
+              hpd <- lapply(D_grid, function(z) {as_interval_surface(coda::HPDinterval(coda::as.mcmc(z), prob = cred_mass))})
               
               # Save
               D_eff[[eff]] <- D; D_eff_grid[[eff]] <- D_grid
-              point_est[[eff]] <- unname(pe); point_est_grid[[eff]] <- unname(pe_grid)
+              point_est[[eff]] <- unname(pe); point_est_grid[[eff]] <- pe_grid
               CI_quant[[eff]] <- quant
               CI_hpd[[eff]] <- hpd
             }
@@ -294,11 +305,12 @@ results_on_train <- function(s, xval_l = -0.5, xval_u = 0.5, xval_N = 100, probs
           } else if (eff == "fcont"){
             # Compute
             D <- D_eff$f1 + D_eff$f2
-            D_grid <- D_eff_grid$f1 + D_eff_grid$f2
+            D_grid <- outer(D_eff_grid$f1, D_eff_grid$f2, "+")
+            dimnames(D_grid) <- grid_names
             pe <- point_est$f1 + point_est$f2
-            pe_grid <- point_est_grid$f1 + point_est_grid$f2
-            quant <- boot_CI() # still to be implemented
-            colnames(quant) <- c("LB", "UP")
+            pe_grid <- D_grid
+            # Placeholder until bootstrap intervals are implemented.
+            quant <- array(NA_real_, dim = c(xval_N, xval_N, 2L), dimnames = c(grid_names, list(bound = c("LB", "UP"))))
             
             # Save
             D_eff[[eff]] <- D; D_eff_grid[[eff]] <- D_grid
@@ -325,11 +337,13 @@ results_on_train <- function(s, xval_l = -0.5, xval_u = 0.5, xval_N = 100, probs
             } else {
               # Compute
               D <- D_eff$spat + D_eff$fcont
-              D_grid <- sapply(D_eff_grid$spat, function(x) x + D_eff_grid$fcont)
+              D_grid <- lapply(D_eff_grid$spat, function(gamma_r) {D_eff_grid$fcont + gamma_r})
               pe <- point_est$fcont + point_est$spat
-              pe_grid <- lapply(point_est_grid$spat, function(x) x + point_est_grid$fcont)
-              quant <- boot_CI() # still to be implemented
-              colnames(quant) <- c("LB", "UP")
+              pe_grid <- D_grid
+              # One placeholder interval surface per region.
+              quant <- lapply(D_grid, function(z) {
+                array(NA_real_, dim = c(xval_N, xval_N, 2L), 
+                      dimnames = c(grid_names, list(bound = c("LB", "UP"))))})
               
               # Save
               D_eff[[eff]] <- D; D_eff_grid[[eff]] <- D_grid
@@ -342,6 +356,18 @@ results_on_train <- function(s, xval_l = -0.5, xval_u = 0.5, xval_N = 100, probs
       
       res[[mod]] <- list(point_est = point_est, point_est_grid = point_est_grid,
                          CI_quant = CI_quant)
+    }
+    
+    pg <- res[[mod]]$point_est_grid
+    
+    stopifnot(isTRUE(all.equal(unname(pg$fcont), unname(outer(pg$f1, pg$f2, "+")))))
+    
+    if (!is.null(effects_idx$spat)) {
+      stopifnot(length(pg$f) == length(pg$spat))
+      
+      for (r in seq_along(pg$spat)) {
+        stopifnot(isTRUE(all.equal(unname(pg$f[[r]]), unname(pg$fcont + pg$spat[r]))))
+      }
     }
     
   }
