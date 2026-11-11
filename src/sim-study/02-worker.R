@@ -29,7 +29,7 @@ library(stringr)     # str_replace
 
 source("src/sim-study/01-dgp.R")    # generate_data, f_true, car_setup
 source("src/01a-utils.R")           # loss_asymm, construct_DR_basis, ...
-source("src/01b-gibbs.R")           # MCMC_IWLS
+source("src/01b-mcmc.R")            # MCMC_IWLS
 
 OUT_DIR  <- "sim-study/results/"
 GRA_PATH <- "sim-study/tanzania.gra"
@@ -48,7 +48,7 @@ k_n <- function(n) {
 }
 
 # MCMC settings (every Bayesian model, every replicate).
-MCMC_NITER  <- 110   # total iterations
+MCMC_NITER  <- 2010   # total iterations
 MCMC_BURNIN <- 10    # discard
 MCMC_THIN   <- 1      # keep every 10th  => (11000-1000)/10 = 1000 draws
 
@@ -296,7 +296,7 @@ fit_nils_gbi <- function(dat, predictor, model_type, seed = NULL) {
   
   med <- quantreg::rq.fit(X, y, tau = 0.5)
   
-  s12 <- est_s1_s2(as.vector(X %*% med$coefficients - y))
+  s12 <- est_s1_s2(as.vector(y - X %*% med$coefficients))
   k   <- c(kn / s12["s1"], kn / s12["s2"])
   k_deriv <- k / SF; c_deriv <- cn * SF
   
@@ -401,7 +401,7 @@ fit_nils_freq <- function(dat, predictor, seed = NULL) {
   n <- nrow(dat); y <- dat$y; X <- dd$X
   kn <- k_n(n); cn <- c_n(n)
   med <- quantreg::rq.fit(X, y, tau = 0.5)
-  s12 <- est_s1_s2(as.vector(X %*% med$coefficients - y))
+  s12 <- est_s1_s2(as.vector(y - X %*% med$coefficients))
   k   <- c(kn / s12["s1"], kn / s12["s2"])
   P   <- ncol(X)
   
@@ -621,9 +621,10 @@ main <- function(argv = commandArgs(trailingOnly = TRUE)) {
     g <- grid_from_index(idx)
     run_cell(g$dgp, g$predictor, n, g$replicate)
   } else {
-    stopifnot(length(argv) >= 3)
-    n <- if (length(argv) >= 4) as.integer(argv[4]) else n
-    run_cell(argv[1], argv[2], n, as.integer(argv[3]))
+    stopifnot(length(argv) == 4L)
+    run_cell(argv[1], argv[2],
+             n = as.integer(argv[3]),
+             replicate = as.integer(argv[4]))
   }
 }
 
