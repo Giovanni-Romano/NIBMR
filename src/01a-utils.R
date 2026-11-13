@@ -44,21 +44,30 @@ require(mgcv)
 #' i.e. an (asymmetric) version of the loss \ell(e_i; c_n, k_ni) in the notes,
 #' with k[1] = k_n/s_1 (negative side) and k[2] = k_n/s_2 (positive side).
 #' The exponent h = 2*g generalises the "2" appearing in the notes; the default
-#' g = 1 reproduces the notes exactly. Larger k makes the loss steeper (more
-#' peaked around 0), larger c makes it smoother (more differentiable in 0).
+#' g = 1 reproduces the notes exactly. Positive integer g keeps h a positive
+#' even integer, so powers of negative residuals remain real-valued.
+#' Larger k makes the loss steeper (more peaked around 0), 
+#' larger c makes it smoother (more differentiable in 0).
 #'
 #' @param eps Numeric vector of residuals e_i = y_i - f(x_i).
 #' @param k Numeric vector of length 2, k = c(k_n/s_1, k_n/s_2): the loss-shape
 #'   parameter k_ni on the negative and positive side of the mode, respectively
 #'   (TeX: k_ni, asymmetric version).
 #' @param c Positive scalar, the smoothness parameter c_n of the loss (TeX: c_n).
-#' @param g Scalar >= 0 controlling the exponent h = 2*g; default 1 (notes case).
+#' @param g Finite positive integer scalar controlling the exponent h = 2*g;
+#'   default 1 (notes case). Integer-valued numeric inputs such as 1 or 2 are
+#'   accepted alongside R integers such as 1L. Invalid values raise an error.
 #'
 #' @return Numeric vector of the same length as eps with the individual losses.
 #' @examples
 #' e <- seq(-3, 3, length.out = 100)
 #' plot(e, loss_asymm(e, k = c(1, 1), c = 1e-3), type = "l")
 loss_asymm = function(eps, k, c, g = 1){
+  # Check g is a finite positive integer scalar
+  if (!is.numeric(g) || is.complex(g) || length(g) != 1L ||
+      !is.finite(g) || g <= 0 || g != floor(g)) {
+    stop("g must be a finite positive integer scalar.")
+  }
   k1 = k[1]
   k2 = k[2]
   h = 2*g
@@ -78,12 +87,18 @@ loss_asymm = function(eps, k, c, g = 1){
 #' @param k Numeric vector of length 2 with the asymmetric loss-shape parameter
 #'   (k_ni on the negative and positive side).
 #' @param c Positive scalar smoothness parameter c_n of the loss.
-#' @param g Scalar >= 0 controlling the exponent h = 2*g; default 1.
+#' @param g Finite positive integer scalar controlling the exponent h = 2*g;
+#'   default 1. Integer-valued numeric inputs are accepted. Invalid values
+#'   raise an error, using the same restriction as loss_asymm().
 #' @param link Link function mapping the linear predictor to mu (default identity).
 #'
 #' @return Scalar: the summed empirical loss.
 
 loss_asymm_pop = function(beta, y, X, k, c, g = 1, link = function(x) x){
+  if (!is.numeric(g) || is.complex(g) || length(g) != 1L ||
+      !is.finite(g) || g <= 0 || g != floor(g)) {
+    stop("g must be a finite positive integer scalar.")
+  }
   eps = y - link(X%*%beta)
   k_vec = k[(eps > 0) + 1]
   h = 2*g
