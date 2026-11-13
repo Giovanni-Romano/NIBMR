@@ -647,7 +647,7 @@ iwls_re_update <- function(u_curr, y, fe, freq = 1,
 #' @return A list with `logpost` (scalar), `grad` (vector of length length(idx))
 #'   and `H` (diagonal Hessian, vector of length length(idx)).
 eval_logfullcond_beta <- function(idx, beta, 
-                                  X, y, X2 = X2, freq = 1, u,
+                                  X, y, X2 = X^2, freq = 1, u,
                                   link,  link_prime, link_second,
                                   k_post, k_deriv, 
                                   c_post, c_deriv,

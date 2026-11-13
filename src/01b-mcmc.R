@@ -30,7 +30,9 @@
 #' @param id Group index vector of length n mapping each observation to a
 #'   random-intercept group.
 #' @param y Numeric response vector of length n.
-#' @param freq Numeric vector of observation weights (default all 1).
+#' @param freq Numeric vector of observation weights (default all 1). 
+#'   If a single value is provided, it is replicated to all observations.
+#'   If NULL, all observations are weighted equally (with 1).
 #' @param link Link function mu = link(eta) (default identity).
 #' @param link_prime First derivative of the link.
 #' @param link_second Second derivative of the link.
@@ -106,6 +108,10 @@ MCMC_IWLS <- function(niter,
     User Z_spat for continuous effect and X_GMRF for discrete effect")
   }
   
+  if (is.null(X_cont) && !is.null(Z_cont)) {
+    stop("Z_cont is provided but X_cont is NULL.")
+  }
+  
   # Dimensions
   # number of binary covariates
   if (is.null(X_dummy)) {
@@ -113,10 +119,12 @@ MCMC_IWLS <- function(niter,
   } else {
     q = ncol(X_dummy)
   }
-  # number of continuous covariates
-  p = ncol(X_cont)
-  p_nonlin <- if (is.null(Z_cont)) 0L else p
   
+  # number of continuous covariates
+  p <- if (is.null(X_cont)) 0L else ncol(X_cont)
+  p_nonlin <- if (is.null(Z_cont)) 0L else p
+
+
   # number of spatial covariates
   if (!is.null(Z_spat)){
     s = ncol(Z_spat)
@@ -151,11 +159,15 @@ MCMC_IWLS <- function(niter,
   
   if (is.null(freq)) freq <- rep(1, length(y))
   
-  loss_fun <- loss_asymm
+  if (is.null(freq)) {
+    freq <- rep(1, n)
+  } else if (length(freq) == 1L) {
+    freq <- rep(freq, n)
+  }
   
   
   # Build design matrix X
-  X = cbind(1, X_dummy, X_cont, Z_cont, Z_spat, X_GMRF)
+  X = cbind(rep(1, n), X_dummy, X_cont, Z_cont, Z_spat, X_GMRF)
   # colnames(X) = c("Intercept", colnames(X_dummy), colnames(X_cont), 
   #                 c(sapply(1:p, function(j) paste0(colnames(X_cont)[j], "_DR", 1:d[j]))),
   #                 paste0("spatial_DR", 1:ncol(Z_spat)))
@@ -362,7 +374,7 @@ MCMC_IWLS <- function(niter,
     
     ## --- Block update for each continuous covariate (NON-linear effect) ---
     if (!is.null(Z_cont)){
-      for (j_DR in 1:p){
+      for (j_DR in 1:p_nonlin){
         idx.b = (1+q+p) + (sum(d[1:j_DR])-d[j_DR]) + 1
         idx.e = idx.b+d[j_DR]-1
         idx = idx.b:idx.e
