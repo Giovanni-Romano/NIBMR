@@ -110,15 +110,18 @@ results_on_train <- function(s, xval_l = -0.5, xval_u = 0.5, xval_N = 100, probs
     new_xtilde1 <- (new_x - mean(dat[ , "x1"]))/sd(dat[ , "x1"])
     new_xtilde2 <- (new_x - mean(dat[ , "x2"]))/sd(dat[ , "x2"])
     
-    # The smooth constructor for GMRF in mgcv uses a constraint on the spatial
-    # effect that differs from the one used in M0/M2. This mines the comparison
-    # of the estimates across models.
-    # Define "gamma_r" and "n_r" as the effect and the number of observations in region r.
-    # M0/M2 use equal-region centering, meaning that sum_{r = 1}^s gamma_r = 0.
-    # M1 uses weighted centering, meaning that       sum_{r = 1}^s n_r gamma_r = 0.
-    # Here we express M1 spatial effects under equal-region centering.
-    if (mod == "m1" && pred == "X3") {
-      spatial_idx <- grep("^gmrf", colnames(draws))
+    spat_idx <- NULL
+    if (pred == "X3") {
+      spat_idx <- grep(if (mod == "m4") "^region" else "^gmrf", colnames(draws))
+    }
+
+    # M0/M2/M3 use equal-region centering: sum_r gamma_r = 0.
+    # M1 uses observation-weighted centering; M4 uses a reference region.
+    # Recenter their regional effects and shift each draw's intercept so all
+    # fitted predictions are preserved. Legacy M4 fits without regional
+    # coefficients retain their previous, nonspatial extraction.
+    if (pred == "X3" && (mod == "m1" || (mod == "m4" && length(spat_idx) > 0L))) {
+      spatial_idx <- spat_idx
       intercept_idx <- match("Intercept", colnames(draws))
       stopifnot(length(spatial_idx) > 0L, !is.na(intercept_idx), !anyNA(first_row))
       
@@ -128,7 +131,7 @@ results_on_train <- function(s, xval_l = -0.5, xval_u = 0.5, xval_N = 100, probs
       
       draws[, intercept_idx] <- draws[, intercept_idx] + shift
       X[, spatial_idx] <- sweep(X[, spatial_idx, drop = FALSE], 2L, a, "-")
-      }
+    }
     
     if (mod == "m0"){
       dr1 <- des[[mod]]$dr1
@@ -169,11 +172,6 @@ results_on_train <- function(s, xval_l = -0.5, xval_u = 0.5, xval_N = 100, probs
     x1NL_idx <- grep("x1.s", colnames(draws))
     x2L_idx <- which(colnames(draws) == "x2")
     x2NL_idx <- grep("x2.s", colnames(draws))
-    spat_idx <- NULL
-    if (pred == "X3" & mod != "m4"){
-      spat_idx <- grep("gmrf", colnames(draws))
-    }
-    
     effects_idx <- list(int = int_idx, 
                         f1L = x1L_idx, f1NL = x1NL_idx, f1 = c(x1L_idx, x1NL_idx),
                         f2L = x2L_idx, f2NL = x2NL_idx, f2 = c(x2L_idx, x2NL_idx),
