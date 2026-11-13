@@ -47,10 +47,46 @@ k_n <- function(n) {
   (n / const)^(1/7)
 }
 
+# Validate settings before constructing indices or starting any model fit.
+mcmc_schedule <- function(total_iter, burnin, thin) {
+  settings <- list(total_iter = total_iter, burnin = burnin, thin = thin)
+  for (nm in names(settings)) {
+    x <- settings[[nm]]
+    if (!(is.numeric(x) && length(x) == 1L && is.finite(x) &&
+          x > 0 && x == floor(x) && x <= .Machine$integer.max)) {
+      stop(nm, " must be a positive integer within R's integer range.")
+    }
+  }
+  if (total_iter <= burnin) stop("total_iter must exceed burnin.")
+  if ((total_iter - burnin) %% thin != 0) {
+    stop("The post-burn-in iteration count must be divisible by thin.")
+  }
+  list(total_iter = as.integer(total_iter), burnin = as.integer(burnin),
+       thin = as.integer(thin),
+       keep = seq.int(burnin + 1L, total_iter, by = thin),
+       ndraws = as.integer((total_iter - burnin) / thin))
+}
+
+assert_mcmc_draws <- function(draws, expected, model) {
+  if (!is.matrix(draws)) stop(model, " must return a matrix of draws.")
+  if (nrow(draws) != expected) {
+    stop(model, " returned ", nrow(draws), " draws; expected ", expected, ".")
+  }
+  invisible(TRUE)
+}
+
 # MCMC settings (every Bayesian model, every replicate).
-MCMC_NITER  <- 2010   # total iterations
-MCMC_BURNIN <- 10    # discard
-MCMC_THIN   <- 1      # keep every 10th  => (11000-1000)/10 = 1000 draws
+# Select the profile before evaluating this configuration block.
+MCMC_PROFILE <- "development" # "production" or "development"
+MCMC_PROFILES <- list(production = c(total_iter = 11000L, burnin = 1000L, thin = 10L),
+                      development = c(total_iter = 2020L, burnin = 10L, thin = 1L))
+stopifnot(MCMC_PROFILE %in% names(MCMC_PROFILES))
+MCMC_TOTAL_ITER <- MCMC_PROFILES[[MCMC_PROFILE]][["total_iter"]] # Includes burn-in
+MCMC_BURNIN <- MCMC_PROFILES[[MCMC_PROFILE]][["burnin"]]         # Number discarded
+MCMC_THIN <- MCMC_PROFILES[[MCMC_PROFILE]][["thin"]]
+MCMC_SETTINGS <- mcmc_schedule(MCMC_TOTAL_ITER, MCMC_BURNIN, MCMC_THIN)
+MCMC_KEEP <- MCMC_SETTINGS$keep
+MCMC_NDRAWS <- MCMC_SETTINGS$ndraws
 
 # Spline dimension per continuous covariate (M0/M3), 2nd-order penalty.
 # To make bamlss and construct_DR_basis coherent, both use a P-spline with k = D_SPLINE + 2 
@@ -290,6 +326,7 @@ extract_design_draws_bamlss <- function(fit, model = "mu") {
 ## M0 / M2 : Bayesian NIL+GBI ----
 # model_type "M0" = splines, "M2" = linear; X3 adds the GMRF in both.
 fit_nils_gbi <- function(dat, predictor, model_type, seed = NULL) {
+  mcmc <- mcmc_schedule(MCMC_TOTAL_ITER, MCMC_BURNIN, MCMC_THIN)
   dd <- make_design_M0(dat, predictor, splines = (model_type == "M0"))
   n <- nrow(dat); y <- dat$y; X <- dd$X
   kn <- k_n(n); cn <- c_n(n)
@@ -309,7 +346,7 @@ fit_nils_gbi <- function(dat, predictor, model_type, seed = NULL) {
   ntau <- dd$q + dd$p + (model_type == "M0")*dd$p + 1 * (dd$s > 0)
   a_tau <- rep(a_tau_default, ntau); b_tau <- rep(b_tau_default, ntau)
   
-  fit <- MCMC_IWLS(niter = MCMC_NITER + MCMC_BURNIN,
+  fit <- MCMC_IWLS(niter = mcmc$total_iter,
                    X_dummy = NULL, X_cont = dd$X_cont, Z_cont = dd$Z_cont,
                    Z_spat = NULL, X_GMRF = dd$X_GMRF,
                    id = NULL, y = y,
@@ -322,8 +359,9 @@ fit_nils_gbi <- function(dat, predictor, model_type, seed = NULL) {
                    theta_re = NULL, theta_GMRF = dd$theta_GMRF, K_GMRF = dd$K_GMRF,
                    verbose = 0, K_fold = 10, seed = seed)
   
-  idx <- seq(MCMC_BURNIN + 1, MCMC_NITER + MCMC_BURNIN, by = MCMC_THIN)
-  draws <- fit$beta[idx, , drop = FALSE]
+  assert_mcmc_draws(fit$beta, mcmc$total_iter, paste(model_type, "unthinned chain"))
+  draws <- fit$beta[mcmc$keep, , drop = FALSE]
+  assert_mcmc_draws(draws, mcmc$ndraws, model_type)
   
   if (model_type == "M0"){
     variable_names <- switch(predictor,
@@ -345,7 +383,7 @@ fit_nils_gbi <- function(dat, predictor, model_type, seed = NULL) {
   }
   
   
-  dimnames(draws) <- list(iteration = 1:MCMC_NITER, 
+  dimnames(draws) <- list(iteration = seq_len(nrow(draws)),
                           variable = variable_names)
   
   list(draws = draws, fhat = as.vector(X %*% colMeans(draws)),
@@ -354,6 +392,7 @@ fit_nils_gbi <- function(dat, predictor, model_type, seed = NULL) {
 
 ## M1 : Bayesian ALD median (bamlss) ----
 fit_bamlss_median <- function(dat, predictor, seed = NULL) {
+  mcmc <- mcmc_schedule(MCMC_TOTAL_ITER, MCMC_BURNIN, MCMC_THIN)
   form <- switch(predictor,
                  X1 = y ~ s(x1) + s(x2),
                  X2 = y ~ s(x1) + s(x2),
@@ -364,7 +403,7 @@ fit_bamlss_median <- function(dat, predictor, seed = NULL) {
   # before the sampler; we do not inject our DR-basis coefficients as start.
   if (!is.null(seed)) set.seed(seed)
   fit <- bamlss(form, data = dat, family = ALD_bamlss(tau = 0.5),
-                n.iter = MCMC_NITER + MCMC_BURNIN, burnin = MCMC_BURNIN+1, thin = MCMC_THIN)
+                n.iter = mcmc$total_iter, burnin = mcmc$burnin + 1L, thin = mcmc$thin)
   
   # Extract design matrix and draws
   out <- extract_design_draws_bamlss(fit, model = "mu")
@@ -372,6 +411,7 @@ fit_bamlss_median <- function(dat, predictor, seed = NULL) {
   X <- out$X
   # Posterior coefficients: draws x coefficients
   draws <- out$B
+  assert_mcmc_draws(draws, mcmc$ndraws, "M1")
   
   variable_names <- colnames(out$B)
   variable_names <- str_replace(variable_names, 
@@ -385,7 +425,7 @@ fit_bamlss_median <- function(dat, predictor, seed = NULL) {
   variable_names <- str_replace(variable_names, 
                                 pattern = fixed("mu.s.s(region).x"), replacement = "gmrf")
   
-  dimnames(draws) <- list(iteration = 1:MCMC_NITER, 
+  dimnames(draws) <- list(iteration = seq_len(nrow(draws)),
                           variable = variable_names)
   
   list(draws = draws,
@@ -454,11 +494,27 @@ fit_nils_freq <- function(dat, predictor, seed = NULL) {
 # Design for GUD. For X3 the spatial effect enters through the original region
 # factor (categorical), since GUD has no smooth GMRF term: 
 # X = model.matrix(~ x1 + x2 + region). For X1/X2 it is linear only.
-build_gud_design <- function(dat) {
+build_gud_design <- function(dat, predictor) {
+  predictor <- match.arg(predictor, c("X1", "X2", "X3"))
   dat_sc <- dat
   dat_sc$x1 <- scale(dat$x1)
   dat_sc$x2 <- scale(dat$x2)
-  list(X = model.matrix(~ x1 + x2, data = dat_sc))
+  if (predictor == "X3") {
+    if (is.null(dat$region)) stop("M4 requires region for X3.")
+    reg <- if (is.factor(dat$region)) dat$region else factor(dat$region)
+    if (anyNA(reg) || any(table(reg) == 0L)) {
+      stop("M4 requires observations in every declared region.")
+    }
+    if (nlevels(reg) < 2L) stop("X3 requires at least two observed regions.")
+    dat_sc$region <- reg
+    # Keep reference-region contrasts in the fitted model. Equal-region
+    # centering is performed only during result extraction.
+    X <- model.matrix(~ x1 + x2 + region, data = dat_sc,
+                      contrasts.arg = list(region = contr.treatment(levels(reg))))
+  } else {
+    X <- model.matrix(~ x1 + x2, data = dat_sc)
+  }
+  list(X = X)
 }
 
 modal_regression_loo <- function(X, N, y, model, seed, ...) {
@@ -469,24 +525,31 @@ modal_regression_loo <- function(X, N, y, model, seed, ...) {
                     DTP  = rstan::sampling(GUD:::stanmodels$DTP,  data = dat, seed = seed, ...),
                     FG   = rstan::sampling(GUD:::stanmodels$FG,   data = dat, seed = seed, ...))
   
-  arr = posterior::as_draws(stanfit)
-  draws = matrix(arr,
-                 nrow = dim(arr)[1], ncol = dim(arr)[3])[ , substr(dimnames(arr)[3]$variable, 1, 4) == "beta"]
+  # Select coefficients explicitly in design-column order, including beta[10]
+  # and later regional coefficients. Flatten iterations/chains as draw rows.
+  samples <- posterior::as_draws_matrix(stanfit)
+  beta_names <- paste0("beta[", seq_len(ncol(X)), "]")
+  if (!all(beta_names %in% colnames(samples))) {
+    stop("GUD draws do not contain all design coefficients.")
+  }
+  draws <- unclass(samples[, beta_names, drop = FALSE])
   
   list(draws = draws, stanfit = stanfit)
 }
 
 # Retains ALL three GUD members (draws + ELPD) + the selected one.
 fit_gud <- function(dat, predictor, seed_base) {
-  X <- build_gud_design(dat)$X
+  mcmc <- mcmc_schedule(MCMC_TOTAL_ITER, MCMC_BURNIN, MCMC_THIN)
+  X <- build_gud_design(dat, predictor)$X
   N <- nrow(X); y <- dat$y
   mods <- c("TPSC", "FG", "DTP")
   res <- lapply(seq_along(mods), function(j) {
     m  <- mods[j]
     fit <- modal_regression_loo(X, N, y, model = m, seed = seed_base + j,
-                                chains = 1, iter = MCMC_NITER+MCMC_BURNIN, warmup = MCMC_BURNIN,
-                                thin = MCMC_THIN,  # default init, seeded -> reproducible
+                                chains = 1, iter = mcmc$total_iter, warmup = mcmc$burnin,
+                                thin = mcmc$thin,  # default init, seeded -> reproducible
                                 refresh = 0, verbose = FALSE, open_progress = FALSE, show_messages = FALSE)  
+    assert_mcmc_draws(fit$draws, mcmc$ndraws, paste("M4", m))
     elpd <- tryCatch(loo::loo(fit$stanfit)$estimates["elpd_loo", "Estimate"],
                      error = function(e) {
                        warning("loo() failed on ", m, ": ",
@@ -499,8 +562,11 @@ fit_gud <- function(dat, predictor, seed_base) {
   all_draws <- lapply(res, 
                       function(z) {
                         out <- z$fit$draws
-                        dimnames(out) <- list(iteration = 1:MCMC_NITER,
-                                              variable = c("Intercept", "x1", "x2"))
+                        stopifnot(ncol(out) == ncol(X))
+                        variable_names <- colnames(X)
+                        variable_names[variable_names == "(Intercept)"] <- "Intercept"
+                        dimnames(out) <- list(iteration = seq_len(nrow(out)),
+                                              variable = variable_names)
                         out})
   draws <- all_draws[[best]]
   losing_draws <- all_draws[names(all_draws) != best]
@@ -587,7 +653,7 @@ run_cell <- function(dgp, predictor, n, replicate, seed_base = 0) {
                   m1 = NULL, # M1 design is directly created in fit_bamlss_median
                   m2 = make_design_M0(dat, predictor, splines = FALSE),  # M2
                   m3 = make_design_M3(dat, predictor),     # M3
-                  m4 = build_gud_design(dat))              # M4
+                  m4 = build_gud_design(dat, predictor))   # M4
   
   fits <- list(m0 = fit_nils_gbi(dat, predictor, "M0", seed = s),
                m1 = fit_bamlss_median(dat, predictor, seed = s + 1000),
