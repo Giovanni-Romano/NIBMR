@@ -157,14 +157,13 @@ MCMC_IWLS <- function(niter,
     stop("Length of beta0 is not equal to total parameter dimension P")
   }
   
-  if (is.null(freq)) freq <- rep(1, length(y))
-  
   if (is.null(freq)) {
     freq <- rep(1, n)
   } else if (length(freq) == 1L) {
     freq <- rep(freq, n)
   }
   
+  loss_fun <- loss_asymm
   
   # Build design matrix X
   X = cbind(rep(1, n), X_dummy, X_cont, Z_cont, Z_spat, X_GMRF)
