@@ -150,9 +150,9 @@ gmrf_design <- local({
   
   U_tilde <- Gamma_null
   
-  Omega = diag(sqrt(lambda))
+  Omega = diag(lambda)
   
-  L = Gamma_pen %*% Omega
+  L = Gamma_pen %*% Omega^{1/2}
   V_tilde = L %*% solve(crossprod(L))
   
   if (!(all(round(crossprod(V_tilde, K %*% V_tilde), 2) == diag(1, k)))){
