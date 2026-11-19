@@ -15,7 +15,13 @@ cover every setting; seeds depend on the scenario, not its row/order.
 
 - 60,000 total iterations, 10,000 burn-in, thinning 10: **5,000 saved draws per
   chain**; one M5 chain on one CPU by default.
-- D_SPLINE=8; 100 M3 bootstrap refits; 95% pointwise intervals.
+- D_SPLINE=8 matches M1's default k=10: M1 has 9 centered coefficients per
+  covariate; M0/M5 have 1 linear + 8 nonlinear coefficients, and M3 has 9
+  centered P-spline coefficients. The basis families and penalties retain
+  their respective definitions. There are 100 M3 bootstrap refits and 95%
+  pointwise intervals.
+- M5_INIT_METHOD="stan" uses Stan's default random initialization on the
+  unconstrained parameter scale.
 - The agreed 50-point curves and 50×50 surfaces, including region-specific
   surfaces; one fixed independent test set of 500 responses per DGP.
 - Original priors, loss policy and calibration. Optimizer warnings are muted;
@@ -146,6 +152,37 @@ It runs even if some tasks failed. R exceptions are saved in `failures/` and
 return a nonzero exit code. Slurm kills/timeouts may leave no failure file;
 collection still reports the missing result. No task appends to a shared RDS
 or CSV: each task writes unique files and completes them by atomic rename.
+
+## Console progress
+
+`run_cell()`, `run_demo_cell()` and `results_on_train()` now print concise
+start/completion lines with timestamps and elapsed seconds. Model optimizers,
+progress bars and bootstrap counters are hidden. Warnings, errors and numerical
+diagnostics remain on their normal channel. M4 explicitly reports a failed LOO
+selection. Batch tasks also report checkpoint loading/saving, structural/test
+evaluation, and the final result save.
+
+```r
+s <- run_cell("D3", "X2", 250, 15)                 # concise progress
+s <- run_cell("D3", "X2", 250, 15, verbose = FALSE) # hide status lines
+s <- run_cell("D3", "X2", 250, 15, engine_output = TRUE) # native engine prints
+fitted <- results_on_train(s, verbose = FALSE)
+```
+
+The same `verbose` and `engine_output` arguments are available on
+`run_study_task()`. They affect console output only, not saved study settings,
+model arguments, seeds or results. `show_header=FALSE` on `run_cell()` is used
+internally to avoid printing the scenario header twice in the batch pipeline.
+Package startup notices printed before the pipeline is loaded may still appear.
+
+The final printed elapsed time includes the result write. The saved `timing$total`
+retains its earlier meaning (before that write); Slurm's Elapsed also includes
+R startup. Per-model timings are printed; saved fitting timings still cover
+all models together.
+
+Deploy after all pilot tasks and their collector finish. These source changes
+also change the study fingerprints, so prepare a new study directory for the
+updated code. Keep the existing pilot directory and its results intact.
 
 ## Files, resumption and collection
 
