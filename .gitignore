@@ -12,7 +12,7 @@ data/
 /sim-study/
 /sim-study-old/
 stations.db
-
+/src/sim-study/tests/
 .Rapp.history
 
 docs/
