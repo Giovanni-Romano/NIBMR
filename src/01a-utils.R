@@ -33,6 +33,120 @@ require(mgcv)
 # library(mgcv, lib.loc = "/Users/giovanni/Library/Caches/org.R-project.R/R/renv/sandbox/macos/R-4.5/aarch64-apple-darwin20/4cd76b74")
 
 # UTILS ----
+## Optimization diagnostics ----
+#' Run optim(), retaining up to ntry total attempts (including the first).
+#'
+#' A usable result has finite reported and re-evaluated scalar objectives and
+#' a finite coefficient vector of the expected length. This is a numerical requirement, not a
+#' claim about convergence or the global minimum. Finite nonconverged results
+#' remain eligible: the lowest objective across usable attempts is selected.
+#'
+#' On an error, unusable result or nonzero convergence code, retry until ntry
+#' total attempts have run. Multiply the preceding maxit by retry_factor for
+#' each retry. Start from the lowest-objective usable result so far, otherwise
+#' from the original par. Other controls are unchanged. Stop early on a usable
+#' zero-code result. Set ntry=1 or retry=FALSE for a single attempt.
+#' SANN's zero code only denotes completion of its evaluation budget; it is
+#' not evidence of convergence and does not by itself trigger a retry.
+#'
+#' warn controls both optimizer warnings and termination/retry warnings.
+#' Diagnostics are retained even when warn=FALSE. No RNG seed is reset here.
+#' If no attempt is usable, return usable=FALSE for the caller to handle.
+#' Attempts include their start, controls, complete optim result, warnings and
+#' error message. Existing optim fields refer to the selected attempt.
+optim_with_diagnostics <- function(par, fn, gr = NULL, method,
+                                   control, retry = TRUE, retry_factor = 5,
+                                   warn = FALSE, label = method, ntry = 5L) {
+  if (!is.logical(retry) || length(retry) != 1L || is.na(retry) ||
+      !is.logical(warn) || length(warn) != 1L || is.na(warn))
+    stop("retry and warn must be TRUE or FALSE.")
+  if (!is.numeric(ntry) || is.complex(ntry) || length(ntry) != 1L ||
+      !is.finite(ntry) || ntry < 1 || ntry != floor(ntry) || ntry > .Machine$integer.max)
+    stop("ntry must be a positive integer within R's integer range.")
+  if (length(retry_factor) != 1L || !is.finite(retry_factor) || retry_factor <= 1)
+    stop("retry_factor must be finite and greater than 1.")
+  if (!is.list(control) || length(control$maxit) != 1L ||
+      !is.finite(control$maxit) || control$maxit < 1 ||
+      control$maxit != floor(control$maxit) ||
+      control$maxit > .Machine$integer.max)
+    stop("control$maxit must be a positive integer within R's integer range.")
+
+  run_attempt <- function(start, settings) {
+    messages <- character(0)
+    error <- NULL
+    result <- NULL
+    objective_at_par <- NA_real_
+    tryCatch(withCallingHandlers({
+      result <- stats::optim(start, fn = fn, gr = gr, method = method, control = settings)
+      # SANN can replace a nonfinite objective with a large finite sentinel.
+      # Check the actual deterministic objective once at the returned point.
+      if (is.numeric(result$par) && !is.complex(result$par) &&
+          length(result$par) == length(par) && all(is.finite(result$par)))
+        objective_at_par <- fn(result$par)
+    },
+      warning = function(w) {
+        messages <<- c(messages, conditionMessage(w))
+        invokeRestart("muffleWarning")
+      }), error = function(e) {
+        error <<- conditionMessage(e)
+        NULL
+      })
+    usable <- !is.null(result) && is.numeric(result$par) && !is.complex(result$par) &&
+      length(result$par) == length(par) && all(is.finite(result$par)) &&
+      is.numeric(result$value) && !is.complex(result$value) &&
+      length(result$value) == 1L && is.finite(result$value) && is.null(error) &&
+      is.numeric(objective_at_par) && !is.complex(objective_at_par) &&
+      length(objective_at_par) == 1L && is.finite(objective_at_par)
+    list(start = start, control = settings, result = result,
+         objective_at_par = objective_at_par,
+         usable = usable, warnings = messages, error = error)
+  }
+  attempt_limit <- if (retry) as.integer(ntry) else 1L
+  attempts <- list()
+  next_start <- par
+  next_control <- control
+  best_value <- Inf
+  for (i in seq_len(attempt_limit)) {
+    attempt <- run_attempt(next_start, next_control)
+    attempts[[i]] <- attempt
+    if (attempt$usable && attempt$result$value < best_value) {
+      best_value <- attempt$result$value
+      next_start <- attempt$result$par
+    }
+    if (attempt$usable && isTRUE(attempt$result$convergence == 0L)) break
+    next_control$maxit <- as.integer(min(.Machine$integer.max,
+      ceiling(next_control$maxit * retry_factor)))
+  }
+  usable <- vapply(attempts, function(a) a$usable, logical(1))
+  values <- vapply(attempts, function(a) if (a$usable) a$result$value else Inf, numeric(1))
+  selected <- if (any(usable)) which.min(values) else NA_integer_
+  result <- if (any(usable)) attempts[[selected]]$result else
+    list(par = rep(NA_real_, length(par)), value = Inf,
+         counts = c("function" = NA_integer_, gradient = NA_integer_),
+         convergence = NA_integer_, message = "No usable result after optimization attempts.")
+  result$usable <- any(usable)
+  result$method <- method
+  result$selected_attempt <- selected
+  result$attempts <- attempts
+  result$attempt_limit <- attempt_limit
+  result$converged <- if (method == "SANN") NA else
+    isTRUE(result$usable && result$convergence == 0L)
+  problem <- vapply(attempts, function(a)
+    !a$usable || !isTRUE(a$result$convergence == 0L) || length(a$warnings) > 0L, logical(1))
+  if (warn && any(problem)) {
+    details <- vapply(seq_along(attempts), function(i) {
+      a <- attempts[[i]]
+      paste0("attempt ", i, " (maxit=", a$control$maxit, "): ",
+             if (!is.null(a$error)) paste0("error: ", a$error) else
+               paste0("code=", a$result$convergence, ", usable=", a$usable,
+                      if (!is.null(a$result$message)) paste0(", ", a$result$message) else ""),
+             if (length(a$warnings)) paste0("; ", paste(a$warnings, collapse = "; ")) else "")
+    }, character(1))
+    warning(label, ": ", paste(details, collapse = " | "), call. = FALSE)
+  }
+  result
+}
+
 ## Loss function ----
 #' Asymmetric nested interval loss (approximate NIL).
 #'
@@ -46,6 +160,9 @@ require(mgcv)
 #' The exponent h = 2*g generalises the "2" appearing in the notes; the default
 #' g = 1 reproduces the notes exactly. Positive integer g keeps h a positive
 #' even integer, so powers of negative residuals remain real-valued.
+#' The implementation uses expm1() for 1 - exp(-a). For g = 1, the
+#' square-root difference defining a is also stabilized by rationalization.
+#' Other g values retain the original power difference.
 #' Larger k makes the loss steeper (more peaked around 0), 
 #' larger c makes it smoother (more differentiable in 0).
 #'
@@ -68,11 +185,22 @@ loss_asymm = function(eps, k, c, g = 1){
       !is.finite(g) || g <= 0 || g != floor(g)) {
     stop("g must be a finite positive integer scalar.")
   }
-  k1 = k[1]
-  k2 = k[2]
+  k_vec = unname(k[(eps > 0) + 1L])
   h = 2*g
-  (eps < 0) * (1 - exp(c^(1/h)-( (k1*eps)^h + c )^(1/h) )) + 
-    (eps > 0) * (1 - exp(c^(1/h)-( (k2*eps)^h + c )^(1/h) ))
+  u = (k_vec * eps)^h
+  c_root = c^(1/h)
+
+  # Original loss: 1 - exp(-a), where a = (u + c)^(1/h) - c^(1/h).
+  a = (u + c)^(1/h) - c_root
+  if (g == 1) {
+    # Rationalize: sqrt(u+c) - sqrt(c) = u / (sqrt(u+c) + sqrt(c)).
+    # Use this near zero to avoid subtracting nearly equal square roots;
+    # retain the original expression elsewhere, including infinite tails.
+    small = which(u <= c & is.finite(a) & c > 0)
+    a[small] = u[small] / (sqrt(u[small] + c) + c_root)
+  }
+  # Since expm1(x) = exp(x) - 1, this equals 1 - exp(-a) without cancellation.
+  -expm1(-a)
 }
 
 #' DEPRECATED. Population (whole-vector) asymmetric nested interval loss.
@@ -95,14 +223,10 @@ loss_asymm = function(eps, k, c, g = 1){
 #' @return Scalar: the summed empirical loss.
 
 loss_asymm_pop = function(beta, y, X, k, c, g = 1, link = function(x) x){
-  if (!is.numeric(g) || is.complex(g) || length(g) != 1L ||
-      !is.finite(g) || g <= 0 || g != floor(g)) {
-    stop("g must be a finite positive integer scalar.")
-  }
   eps = y - link(X%*%beta)
-  k_vec = k[(eps > 0) + 1]
-  h = 2*g
-  sum(1 - exp(c^(1/h)-( (k_vec*eps)^h + c )^(1/h) ))
+  # Same sum of 1 - exp(c^(1/h) - ((k*eps)^h + c)^(1/h)), using the
+  # stable pointwise implementation and its shared positive-integer g check.
+  sum(loss_asymm(eps, k = k, c = c, g = g))
 }
 
 
@@ -131,16 +255,23 @@ loss_asymm_pop = function(beta, y, X, k, c, g = 1, link = function(x) x){
 #' @param link Link function mapping the linear predictor to mu.
 #' @param link_prime First derivative of the link function.
 #' @param offset Optional linear predictor offset (e.g. presence of random effects).
+#' @param eta Optional precomputed numeric predictor X %*% beta + offset.
+#'   It already includes the offset; offset is not added again when eta is supplied.
 #'
 #' @return Numeric vector of length length(idx): the gradient of the
 #'   log-likelihood with respect to the selected coefficients.
-score_pop = function(idx, beta, y, X, k, c, freq = 1, link, link_prime, offset = 0){
-  eta = drop(X %*% beta) + offset
+score_pop = function(idx, beta, y, X, k, c, freq = 1, link, link_prime, offset = 0, eta = NULL){
+  # Reuse the full conditional's predictor, including its offset. Standalone
+  # calls without eta retain the original matrix-vector calculation.
+  if (is.null(eta)) eta = drop(X %*% beta) + offset
   eps = y - link(eta)
   k_vec = k[(eps>0)+1]
   u = k_vec*eps
   
-  F1 = k_vec * exp(sqrt(c) - sqrt(u^2+c)) * u/sqrt(u^2+c) * link_prime(eta)
+  log_phi = sqrt(c) - sqrt(u^2+c)
+  # Original factor: k_vec * exp(log_phi). Combine magnitudes before
+  # exponentiating; sign() also preserves the expression for signed k.
+  F1 = sign(k_vec) * exp(log(abs(k_vec)) + log_phi) * u/sqrt(u^2+c) * link_prime(eta)
   out = drop(crossprod(X[ , idx, drop = F], freq * F1))
   return(out)
 }
@@ -171,19 +302,36 @@ score_pop = function(idx, beta, y, X, k, c, freq = 1, link, link_prime, offset =
 #' @param link_prime First derivative of the link function.
 #' @param link_second Second derivative of the link function.
 #' @param offset Optional linear predictor offset (e.g. presence of random effects).
+#' @param eta Optional precomputed numeric predictor X %*% beta + offset.
+#'   It already includes the offset; offset is not added again when eta is supplied.
 #'
 #' @return Numeric vector of length length(idx): the diagonal of the Hessian of
 #'   the log-likelihood with respect to the selected coefficients.
 H_pop = function(idx, beta, y, X, X2, k, c, freq = 1, 
-                 link, link_prime, link_second, offset = 0){
-  eta = drop(X %*% beta) + offset
+                 link, link_prime, link_second, offset = 0, eta = NULL){
+  # Supplied eta already includes offset; recompute only for standalone calls.
+  if (is.null(eta)) eta = drop(X %*% beta) + offset
   eps = (y - link(eta))
   k_vec = k[(eps>0)+1]
   u = k_vec*eps
-  
-  F1 = k_vec^2 * exp(sqrt(c) - sqrt(u^2+c)) * (
-    link_prime(eta)^2 * ((u^2)/(u^2+c) - c/((u^2+c)^(3/2))) +
-      link_second(eta) * eps/sqrt(u^2+c)
+
+  u2 = u^2
+  s = u2 + c
+  root_s = sqrt(s)
+  # Original ratio: u^2 / (u^2 + c). Keep it near zero to avoid the
+  # cancellation in 1 - c/s. If u^2 overflows, use its limiting value 1
+  # (appropriate in this tail regime with the small c used in the study).
+  ratio = u2 / s
+  ratio[is.infinite(u2)] = 1
+
+  log_phi = sqrt(c) - root_s
+  # Original factor: k_vec^2 * exp(log_phi). The log-scale equivalent
+  # avoids separately overflowing k_vec^2 or underflowing exp(log_phi).
+  # Also, c/s/root_s = c/s^(3/2), without forming the potentially
+  # overflowing power s^(3/2). The link-derivative terms are unchanged.
+  F1 = exp(2 * log(abs(k_vec)) + log_phi) * (
+    link_prime(eta)^2 * (ratio - c/s/root_s) +
+      link_second(eta) * eps/root_s
   )
   out = drop(crossprod(X2[ , idx, drop = F], freq * F1))
   
@@ -198,19 +346,19 @@ H_pop = function(idx, beta, y, X, X2, k, c, freq = 1,
 #' covariate x. Starting from the P-/GPS-spline design B (with penalty K), the
 #' basis is reparametrised so that (i) it is constrained to be orthogonal to the
 #' intercept and the (scaled) linear term, i.e. Z lives in the span of
-#' the nonlinear part of f, and (ii) in the DR basis the penalty becomes the
-#' identity. Concretely one first discards the two directions of B aligned with
-#' the intercept and the linear term (the first two principal directions after
-#' the constraint (1, scale(x))), then solves a generalised eigen-decomposition
+#' the nonlinear part of f, and (ii) in the DR basis the penalty becomes a scalar
+#' multiple of the identity. 
+#' Concretely one first uses an SVD to obtain the nullspace of the constraint
+#' matrix C = (1, scale(x))^T B, then solves a generalised eigen-decomposition
 #' of the Gram matrix G_tilde against the penalty K_tilde, and finally rescales
-#' the columns as requested.
+#' the whole basis as requested.
 #'
 #' @param x Numeric vector of covariate values (length n).
 #' @param d Number of nonlinear basis functions (the DR dimension), default 10.
 #'   This corresponds to d_j in the notes (the dimension of the nonlinear
 #'   coefficients of the j-th effect); the full spline uses k = d + 2 basis.
-#' @param rescale Logical; if TRUE the basis columns are normalised to unit norm
-#'   (scaled by sqrt(n / sum(Z^2))), default TRUE.
+#' @param rescale Logical; if TRUE multiply the whole basis by
+#'   sqrt(n / sum(Z^2)), so that sum(Z^2) / n = 1; default TRUE.
 #' @param type_of_splines Character; "ps" (P-splines) or "gps" (for which the
 #'   package gps.mgcv is required).
 #'
@@ -218,8 +366,10 @@ H_pop = function(idx, beta, y, X, X2, k, c, freq = 1,
 #'   \item{Z}{n x d matrix of DR basis functions evaluated at x.}
 #'   \item{Trafo}{Transformation matrix such that Z = B %*% Trafo.}
 #'   \item{smooth_object}{The mgcv smooth object used to reconstruct B on a grid.}
-#'   \item{Gram}{The Gram matrix G_tilde (B^T B / n) in the DR coordinates.}
-#'   \item{Penalty}{The transformed penalty matrix K_tilde.}
+#'   \item{Gram}{G_tilde = V0^T (B^T B / n) V0, before the eigen-transformation
+#'     and rescaling.}
+#'   \item{Penalty}{K_tilde = V0^T K V0, before the eigen-transformation
+#'     and rescaling.}
 construct_DR_basis <- function(x, d = 10, rescale = TRUE, type_of_splines = "ps") {
   
   n <- length(x)
@@ -257,7 +407,7 @@ construct_DR_basis <- function(x, d = 10, rescale = TRUE, type_of_splines = "ps"
   
   # perform change of basis
   Z <- B %*% Trf
-  # normalize to unit norm
+  # Rescale the whole basis so that sum(Z^2) / n = 1.
   scaling_factor <- 1
   if (rescale) {
     scaling_factor <- sqrt(n / sum(Z^2))
@@ -442,6 +592,11 @@ construct_DR_Spatial<-function(x1, x2, k1 = 10, k2 = 10, normalize_cols = FALSE)
 #' @param w Generalized-Bayes weight (UILC-calibrated).
 #' @param tau Vector of prior standard deviations (sd, so tau^2 is the variance).
 #' @param tau_idx Maps each coefficient beta[k], k>1, to its tau component.
+#' @param intercept_mean Fixed mean of the proper Gaussian prior on beta[1].
+#' @param intercept_sd Fixed positive standard deviation of that prior (not
+#'   its variance). Both prior parameters must be finite real numeric scalars.
+#'   They are forwarded to both target evaluations, including for blocks that
+#'   do not contain the intercept; neither is sampled through tau.
 #' @param hess_eps Small positive constant used by make_negdef.
 #' @param step Scale multiplying the gradient in the proposal mean (default 1).
 #'
@@ -454,6 +609,7 @@ iwls_beta_update <- function(idx, beta_curr, u_curr,
                              k_post, k_deriv, 
                              c_post, c_deriv, 
                              w, tau, tau_idx,
+                             intercept_mean, intercept_sd,
                              hess_eps = 1e-3,
                              step = 1){
   # Current state
@@ -464,7 +620,8 @@ iwls_beta_update <- function(idx, beta_curr, u_curr,
     k_post = k_post, k_deriv = k_deriv, 
     c_post = c_post, c_deriv = c_deriv,
     w = w,
-    tau = tau, tau_idx = tau_idx
+    tau = tau, tau_idx = tau_idx,
+    intercept_mean = intercept_mean, intercept_sd = intercept_sd
   )
   
   Hc <- make_negdef(cur$H, eps = hess_eps)
@@ -483,7 +640,8 @@ iwls_beta_update <- function(idx, beta_curr, u_curr,
     k_post = k_post, k_deriv = k_deriv,
     c_post = c_post, c_deriv = c_deriv,
     w = w,
-    tau = tau, tau_idx = tau_idx
+    tau = tau, tau_idx = tau_idx,
+    intercept_mean = intercept_mean, intercept_sd = intercept_sd
   )
   
   Hp <- make_negdef(prop$H, eps = hess_eps)
@@ -634,18 +792,23 @@ iwls_re_update <- function(u_curr, y, fe, freq = 1,
 #' Evaluates the full conditional of the coefficients in `idx` (one MH block).
 #' The log-posterior is
 #'   logpost(beta[idx]) = -w * sum_i freq_i loss_asymm(r_i; k_post, c_post)
-#'                        - 1/2 * sum(beta[idx]^2 / tau_tmp^2)   [+ const],
+#'     - 1/2 * sum(prior_precision * (beta[idx] - prior_mean)^2) [+ const],
 #' with residuals r = y - link(X %*% beta + u). The gradient/Hessian combine
 #' the loss contribution (score_pop / H_pop, evaluated with the *smoother*
 #' proposal parameters k_deriv, c_deriv) and the Gaussian prior contribution
-#' -Omega*beta and -Omega, where Omega = 1/tau_tmp^2. The intercept (idx[1]==1)
-#' has a flat prior (no prior contribution).
+#' -prior_precision * (beta[idx] - prior_mean) and -prior_precision.
+#' For coefficient 1 the mean is intercept_mean and precision is intercept_sd^-2.
+#' Other coefficients have mean zero and precision tau[tau_idx[k-1]]^-2.
+#' The selection idx == 1 identifies the intercept even in a mixed or reordered
+#' block. Prior normalizing constants are omitted because they are constant
+#' in the coefficients being updated. This function does not validate the
+#' intercept prior parameters; callers must supply valid values.
 #'
 #' @param idx Integer vector indexing the block of beta to evaluate.
 #' @param beta Full coefficient vector.
 #' @param X Numeric design matrix Phi = (1, x, Z).
 #' @param y Numeric response vector.
-#' @param X2 Element-wise square of X (defaults to own X, used for Hessian).
+#' @param X2 Element-wise square of X (defaults to X^2), used for the Hessian.
 #' @param freq Numeric observation weights.
 #' @param u Random-effects vector; eta = X %*% beta + u.
 #' @param link Link function.
@@ -658,6 +821,10 @@ iwls_re_update <- function(u_curr, y, fe, freq = 1,
 #' @param w Generalized-Bayes weight.
 #' @param tau Vector of prior standard deviations (tau^2 = prior variance).
 #' @param tau_idx Maps each coefficient beta[k], k>1, to its tau component.
+#' @param intercept_mean Fixed finite real scalar, the prior mean of beta[1].
+#' @param intercept_sd Fixed finite positive real scalar, the prior standard
+#'   deviation of beta[1]. This parameter is separate from tau and its
+#'   variance is not updated by the sampler.
 #'
 #' @return A list with `logpost` (scalar), `grad` (vector of length length(idx))
 #'   and `H` (diagonal Hessian, vector of length length(idx)).
@@ -666,11 +833,14 @@ eval_logfullcond_beta <- function(idx, beta,
                                   link,  link_prime, link_second,
                                   k_post, k_deriv, 
                                   c_post, c_deriv,
-                                  w, tau, tau_idx) {
+                                  w, tau, tau_idx,
+                                  intercept_mean, intercept_sd) {
   beta <- drop(beta)
   loss_fun <- loss_asymm
   
   # --- log-likelihood ---
+  # Compute the predictor once for the target, score and Hessian. Pass its
+  # numeric-vector form below, matching the derivative helpers' original input.
   eta <- X %*% beta + u
   r <- drop(y - link(eta))
   loglik <- -w * sum(freq * loss_fun(r, k = k_post, c = c_post))
@@ -678,27 +848,49 @@ eval_logfullcond_beta <- function(idx, beta,
   grad_ll = w * score_pop(idx = idx, beta = beta, y = y, X = X, 
                           k = k_deriv, c = c_deriv, freq = freq,
                           link = link, link_prime = link_prime,
-                          offset = u) 
+                          offset = u, eta = drop(eta))
   H_ll = w * H_pop(idx = idx, beta = beta, y = y, X = X, X2 = X2, 
                    k = k_deriv, c = c_deriv, freq = freq,
                    link = link, link_prime = link_prime, link_second = link_second, 
-                   offset = u)
+                   offset = u, eta = drop(eta))
   
   # --- Gaussian prior ---
-  # No prior on intercept beta[1]
-  # Prior on beta[-1] with group-specific variances tau[tau_idx]^2
-  if (idx[1] == 1) {
-    logprior <- 0
-    grad_prior <- 0
-    H_prior <- 0
-  } else {
-    tau_tmp <- tau[tau_idx[idx-1]]
-    Omega <- 1 / (tau_tmp^2)
-    logprior <- -0.5 * sum(beta[idx]^2 / (tau_tmp^2))
-    grad_prior <- - (Omega * beta[idx])
-    H_prior <- - Omega
+  # Gaussian priors for the coefficients in the current update block.
+  # beta[1] has a fixed mean and standard deviation.
+  # Remaining coefficients retain their existing zero-mean priors.
+  prior_mean <- numeric(length(idx))
+  prior_precision <- numeric(length(idx))
+  is_intercept <- idx == 1L
+  if (any(is_intercept)) {
+    prior_mean[is_intercept] <- intercept_mean
+    prior_precision[is_intercept] <- (1 / intercept_sd)^2
+  }
+  if (any(!is_intercept)) {
+    tau_tmp <- tau[tau_idx[idx[!is_intercept] - 1L]]
+    prior_precision[!is_intercept] <- 1 / tau_tmp^2
   }
   
+  centered_beta <- beta[idx] - prior_mean
+
+  logprior <- -0.5 * sum(prior_precision * centered_beta^2)
+  grad_prior <- -prior_precision * centered_beta
+  H_prior <- -prior_precision
+
+  # Historical flat-intercept prior block (inactive; retained for comparison).
+  # # No prior on intercept beta[1]
+  # # Prior on beta[-1] with group-specific variances tau[tau_idx]^2
+  # if (idx[1] == 1) {
+  #   logprior <- 0
+  #   grad_prior <- 0
+  #   H_prior <- 0
+  # } else {
+  #   tau_tmp <- tau[tau_idx[idx-1]]
+  #   Omega <- 1 / (tau_tmp^2)
+  #   logprior <- -0.5 * sum(beta[idx]^2 / (tau_tmp^2))
+  #   grad_prior <- - (Omega * beta[idx])
+  #   H_prior <- - Omega
+  # }
+
   # --- full conditional ---
   logpost <- loglik + logprior
   grad <- grad_ll + grad_prior
@@ -748,20 +940,23 @@ eval_logfullcond_re <- function(y, fe, u,
   loss_fun <- loss_asymm
   
   # --- log-likelihood ---
-  r <- drop(y - link(fe + u))
+  # The complete predictor includes the fixed-effects offset fe. Reuse it
+  # below instead of multiplying an all-ones design by u in each helper.
+  eta <- fe + u
+  r <- drop(y - link(eta))
   loglik <- -w * sum(freq * loss_fun(r, k = k_post, c = c_post))
   
   grad_ll = w * score_pop(idx = 1, beta = u, 
                           y = y, X = matrix(rep(1, length(y)), ncol = 1), freq = freq,
                           k = k_deriv, c = c_deriv, 
                           link = link, link_prime = link_prime,
-                          offset = fe) 
+                          offset = fe, eta = drop(eta))
   H_ll = w * H_pop(idx = 1, beta = u, 
                    y = y, X = matrix(rep(1, length(y)), ncol = 1), 
                    X2 = matrix(rep(1, length(y)), ncol = 1), freq = freq,
                    k = k_deriv, c = c_deriv, 
                    link = link, link_prime = link_prime, link_second = link_second,
-                   offset = fe)
+                   offset = fe, eta = drop(eta))
   
   # --- Gaussian prior ---
   Omega <- 1 / (sigma2_u)
@@ -920,13 +1115,24 @@ update_sigma_u <- function(sigma_u_curr, u,
 eval_logfullcond_SDP = function(log_tau2, K, rank_K, beta, theta){
   # u is the notation used in Klein and Kneib (2016)
   # I use log_tau as argument because for me u is the random effect
-  u  = log_tau2
-  aux = drop(beta%*%K%*%beta)/(2 * exp(u))
-  logpost = u/2*(1 - rank_K) - aux - (exp(u)/theta)^(1/2)
-  fd = (1 - rank_K)/2 + aux - (exp(u)/(4*theta))^(1/2)
-  sd = -aux - (exp(u)/(16*theta))^(1/2)
+  u = log_tau2
+  Q = drop(beta %*% K %*% beta)
+  
+  # Original: aux = Q / (2 * exp(u)).
+  # Evaluate its logarithm first to avoid overflow/underflow in exp(u).
+  aux = if (Q == 0) 0 else exp(log(Q) - log(2) - u)
+  
+  # Original: sqrt(exp(u) / theta).
+  # Algebraically identical, without constructing exp(u) first.
+  t = exp((u - log(theta)) / 2)
+  
+  logpost = u/2 * (1 - rank_K) - aux - t
+  fd = (1 - rank_K)/2 + aux - t/2
+  sd = -aux - t/4
+  
   return(list(logpost = logpost, grad = fd, hess = sd))
 }
+
 
 #' IWLS-type Metropolis-Hastings update for the SDP variance parameter.
 #'
@@ -1013,6 +1219,12 @@ iwls_SDP_update = function(log_tau2, K, rank_K, beta, theta, step = 1){
 #' log scale with iwls_SDP_update (SDP prior for the random-effects variance,
 #' using penalty K = I with full rank), and the corresponding acceptance is
 #' recorded. Returns the new u and sigma2_u together with acceptance vectors.
+#'
+#' The full conditional holds beta fixed, including the global intercept
+#' beta[1]. Its Gaussian prior is therefore constant during these updates and
+#' cancels from their MH ratios. intercept_mean/intercept_sd are not needed
+#' here: the current intercept already enters fe = X %*% beta. The random
+#' intercepts u_i have their own N(0, sigma2_u) prior.
 #'
 #' @param u Vector of current random effects, one per group.
 #' @param sigma2_u Current value of the random-effects variance.

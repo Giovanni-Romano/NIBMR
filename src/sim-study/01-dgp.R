@@ -129,6 +129,19 @@ N_REGIONS <- car_setup$N_REGIONS
 # 4. Main data-generator ####
 # --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
 
+# Give each (DGP, replicate) pair its own block of 10,000 seeds, leaving
+# room for model offsets 0:7000 without reusing another scenario's fit seed.
+# Predictor and sample size are omitted so their data streams remain shared.
+data_seed <- function(dgp, replicate, seed_base = 0) {
+  stopifnot(replicate >= 1, replicate == floor(replicate))
+  dgp_idx <- match(dgp, c("D1", "D2", "D3", "D4"))
+  scenario_id <- 4 * (replicate - 1) + dgp_idx - 1
+  seed <- seed_base + 10000 * scenario_id + 1
+  stopifnot(is.finite(seed), seed == floor(seed), seed >= 0,
+            seed <= .Machine$integer.max - 7000)
+  seed
+}
+
 #' Generate one (predictor-specific) simulated data set.
 #'
 #' @param dgp       One of "D1", "D2", "D3", "D4".
@@ -138,7 +151,7 @@ N_REGIONS <- car_setup$N_REGIONS
 #' @param n_max     Size of the single full draw (default 1000) of which the
 #'                  first `n` rows are kept (nesting / information coherence).
 #' @param seed_base Base seed; the per-cell seed is derived from (dgp, replicate)
-#'                  only, so all three predictors share the x1/x2/eps stream.
+#'                  by data_seed(), so all three predictors share x1/x2/eps.
 #'
 #' @return A list with
 #'   dat    : data.frame with columns y, x1, x2 (and region, factor, for X3),
@@ -162,8 +175,7 @@ generate_data <- function(dgp, predictor, n, replicate,
   }
   
   # --- Seed depends only on (dgp, replicate) ---
-  dgp_idx  <- match(dgp, c("D1", "D2", "D3", "D4"))
-  seed     <- seed_base + (dgp_idx - 1L) * 1e2 + replicate
+  seed <- data_seed(dgp, replicate, seed_base)
   set.seed(seed)
   
   # --- Draw covariates and errors for the full sample ---

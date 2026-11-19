@@ -1,3 +1,81 @@
+# Shared NIL calibration: the R sampler and Stan backend use the same folds,
+# objective, gradient, retries and P/2 numerator. Extracted without changing
+# the original arithmetic or RNG order.
+calibrate_nils <- function(X, y, beta0, k, c, freq = rep(1, nrow(X)),
+                           link = identity, link_prime = function(x) rep(1, length(x)),
+                           K_fold = 10L, seed = NULL, verbose = 0,
+                           optim_warn = FALSE, optim_retry = TRUE, optim_retry_factor = 5,
+                           cv_optim_control = list(maxit = 100L, reltol = sqrt(.Machine$double.eps)),
+                           optim_ntry_cv = 5L, cv_analytic_gradient = TRUE) {
+  n <- nrow(X); P <- ncol(X); loss_fun <- loss_asymm
+  w_num <- P / 2
+  if (!is.null(seed)) {set.seed(seed)}
+
+  start_Kfold <- Sys.time()
+  K <- K_fold
+  if (verbose > 0) cat("Start ", K, "-fold CV. ", sep = "")
+  fold_id <- sample(rep(1:K, length.out = n))
+
+  cv_folds <- lapply(seq_len(K), function(f) {
+    test_idx  <- which(fold_id == f)
+    train_idx <- setdiff(seq_len(n), test_idx)
+
+    # Reuse the same training rows/weights in the objective and its gradient.
+    X_train <- X[train_idx, , drop = FALSE]
+    y_train <- y[train_idx]
+    freq_train <- freq[train_idx]
+
+    est <- optim_with_diagnostics(
+      par = beta0,
+      fn = function(b) {
+        lin_pred = X_train %*% b
+        sum(freq_train * loss_fun(y_train - link(lin_pred), k, c))
+      },
+      # score_pop differentiates NEGATIVE loss, so negate it for minimization.
+      # Use the actual loss k/c, without priors, w or proposal smoothing.
+      # NULL preserves the previous numerical-gradient BFGS calculation.
+      gr = if (cv_analytic_gradient) function(b) {
+        -score_pop(seq_len(P), b, y_train, X_train, k = k, c = c,
+                   freq = freq_train, link = link, link_prime = link_prime)
+      } else NULL,
+      method = "BFGS", control = cv_optim_control,
+      retry = optim_retry, retry_factor = optim_retry_factor,
+      warn = optim_warn, label = paste0("CV fold ", f, "/", K),
+      ntry = optim_ntry_cv
+    )
+    heldout_loss <- if (est$usable) sum(freq[test_idx] * loss_fun(
+      y[test_idx] - link(X[test_idx, , drop = FALSE] %*% est$par), k, c)) else NA_real_
+    list(fold = f, n_train = length(train_idx), n_test = length(test_idx),
+         heldout_loss = heldout_loss, optimization = est)
+  })
+  # Complete all fold diagnostics before reporting a numerical failure.
+  # The error condition retains them for tryCatch() / batch-run failure logs.
+  failed_folds <- which(!vapply(cv_folds, function(f)
+    f$optimization$usable && is.finite(f$heldout_loss), logical(1)))
+  if (length(failed_folds)) {
+    stop(structure(list(message = paste0("CV fold(s) ", paste(failed_folds, collapse = ", "),
+      " have no usable fit/held-out loss after optimization attempts."),
+      call = NULL, fold_id = fold_id, folds = cv_folds),
+      class = c("mode_optim_error", "error", "condition")))
+  }
+  CV <- vapply(cv_folds, function(f) f$heldout_loss, numeric(1))
+  mean_cv <- sum(CV) / sum(freq)
+  if (!is.finite(mean_cv) || mean_cv <= 0) {
+    stop(structure(list(message = "CV mean loss must be finite and positive to calibrate w.",
+      call = NULL, fold_id = fold_id, folds = cv_folds),
+      class = c("mode_optim_error", "error", "condition")))
+  }
+  w <- w_num / mean_cv
+  end_Kfold <- Sys.time()
+  diff_time_kfold = round(difftime(end_Kfold, start_Kfold, units = "mins"), 2)
+  if (verbose > 0) cat("End CV. \t", "Exec. time: ", diff_time_kfold, " mins \n\n", sep = "")
+
+  list(w = w, numerator = w_num, mean_cv = mean_cv, fold_id = fold_id, folds = cv_folds,
+       optim_settings = list(warn = optim_warn, retry = optim_retry,
+         retry_factor = optim_retry_factor, ntry = optim_ntry_cv,
+         control = cv_optim_control, analytic_gradient = cv_analytic_gradient))
+}
+
 # MCMC SAMPLER (MAIN) ----
 #' MCMC sampler (IWLS proposals) for additive mode regression with binary,
 #' continuous (linear + DR-nonlinear) and spatial terms plus random intercepts.
@@ -16,7 +94,10 @@
 #' intercepts and sigma2_u, (iii) samples the block variances from their
 #' inverse-Gamma full conditionals, and (iv) stores the draws. The
 #' generalized-Bayes weight `w` is again set by K-fold cross-validation with the
-#' UILC numerator w_num = (P-1)/2 (P = 1 + q + p + sum(d) + s).
+#' UILC numerator w_num = P/2 (P = 1 + q + p + sum(d) + s). The global
+#' intercept has a fixed N(intercept_mean, intercept_sd^2) prior. Conditional
+#' on the block variances, each regression coefficient contributes 1/2 to the
+#' numerator. Random effects and variance hyperparameters are not counted in P.
 #'
 #' @param niter Integer, number of MCMC iterations.
 #' @param X_dummy Numeric design matrix of binary/indicator covariates (n x q);
@@ -47,11 +128,17 @@
 #' @param d Integer vector of length p with the DR dimension per continuous
 #'   covariate (nonlinear basis functions per smooth).
 #' @param beta0 Numeric vector of length P = 1 + q + p + sum(d) + s of starting
-#'   values for beta.
-#' @param a_tau Numeric vector (length q + p+p_nonlin + s) of inverse-gamma shape
+#'   values for beta, including the initial intercept in beta0[1]. These are
+#'   starting values, not the Gaussian intercept prior parameters.
+#' @param a_tau Numeric vector (length q + p+p_nonlin + I(s>0)) of inverse-gamma shape
 #'   parameters for the block variances.
-#' @param b_tau Numeric vector (length q + p+p_nonlin + s) of inverse-gamma rate
+#' @param b_tau Numeric vector (length q + p+p_nonlin + I(s>0)) of inverse-gamma rate
 #'   parameters for the block variances.
+#' @param intercept_mean Fixed finite real numeric scalar, the Gaussian prior
+#'   mean for the global regression intercept beta[1].
+#' @param intercept_sd Fixed finite positive real numeric scalar, the prior
+#'   standard deviation for beta[1], not its variance.The intercept is not 
+#'   included in tau, tau_idx or the sampled variance blocks.
 #' @param theta_re Score of the SDP prior placed on the random-effects variance
 #'   sigma2_u (scale of the prior).
 #' @param theta_GMRF Optional SDP scale for the variance of GMRF (if present), 
@@ -65,17 +152,37 @@
 #' @param step Scale multiplying the gradient in the IWLS proposal mean.
 #' @param K_fold Number of folds for the CV estimate of `w` (default 50).
 #' @param seed Optional RNG seed for reproducibility of the CV folds.
+#' @param optim_warn Emit optimizer warnings in CV (default FALSE). Diagnostics
+#'   are retained regardless of this flag; verbose controls sampler output only.
+#' @param optim_retry Allow retries of failed CV optimization (default TRUE).
+#' @param optim_ntry_cv Maximum total attempts per CV fold, including the first
+#'   (default 5). Stop early on a usable zero-code result. Ignored when
+#'   optim_retry=FALSE, which allows only one attempt.
+#' @param optim_retry_factor Multiply maxit by this factor at each retry
+#'   (default 5); retain the lowest finite objective across usable attempts.
+#' @param cv_optim_control Controls for BFGS calibration. The initial defaults
+#'   explicitly reproduce optim's maxit=100 and reltol=sqrt(machine epsilon).
+#' @param cv_analytic_gradient Use the analytical training-loss gradient in
+#'   calibration (default TRUE). FALSE restores BFGS numerical differentiation.
+#'   Changing this can change fold optima, the calibrated w and posterior draws.
 #'
 #' @return A list with
 #'   \item{beta}{niter x P matrix of sampled coefficients (named as in X).}
-#'   \item{tau}{niter x (q + p+p_nonlin + s) matrix of sampled block standard deviations.}
+#'   \item{tau}{niter x (q + p+p_nonlin + I(s>0)) matrix of sampled block
+#'     standard deviations; all spatial coefficients share one spatial scale.}
 #'   \item{u}{niter x n_id matrix of sampled random intercepts.}
 #'   \item{sigma2u}{Vector (length niter) of sampled random-effects variances.}
 #'   \item{acc_prop}{List with per-block beta acceptance (`beta`), per-group
 #'     random-intercept acceptance (`re_u`) and random-effects-var acceptance
 #'     (`re_sigma2u`), each divided by niter.}
 #'   \item{logpost}{niter x (1 + q + p+p_nonlin + n_sp_up) matrix of log-full-conditionals.}
-#'   \item{w}{The estimated generalized-Bayes weight.}
+#'   \item{intercept_prior}{List containing the fixed Gaussian prior mean and sd.}
+#'   \item{calibration}{List containing w (the estimated generalized-Bayes
+#'     weight), numerator (P/2), and mean_cv (the weighted mean held-out loss).
+#'     fold_id stores observation-to-fold assignments; folds stores each fold's
+#'     held-out loss and complete optimization diagnostics, including retries.
+#'     optim_settings$analytic_gradient records the gradient choice.
+#'     Access the learning rate with calibration$w; there is no top-level w.}
 MCMC_IWLS <- function(niter,
                       X_dummy = NULL,
                       X_cont = NULL,
@@ -92,13 +199,19 @@ MCMC_IWLS <- function(niter,
                       d, # splines dimension for every continuous covariate
                       beta0,
                       a_tau, b_tau,
+                      intercept_mean = 0, intercept_sd = 100,
                       theta_re = NULL,
                       theta_GMRF = NULL, K_GMRF = NULL,
                       debug = FALSE, verbose = 0, print_step = 1000,
                       hess_eps = 1e-3,
                       step = 1,
                       K_fold = 50,
-                      seed = NULL) {
+                      seed = NULL,
+                      optim_warn = FALSE, optim_retry = TRUE,
+                      optim_retry_factor = 5,
+                      cv_optim_control = list(maxit = 100L, reltol = sqrt(.Machine$double.eps)),
+                      optim_ntry_cv = 5L,
+                      cv_analytic_gradient = TRUE) {
   
   cat("Fitting starts at: ", format(Sys.time(), "%H:%M:%S"), "\n")
   
@@ -172,40 +285,17 @@ MCMC_IWLS <- function(niter,
   #                 paste0("spatial_DR", 1:ncol(Z_spat)))
   
   # --- Estimate w ---
-  # Same UILC as in MCMC_IWLS_basic_deprecated (see comment there): the closed-form numerator
-  # equals the number of informative (Gaussian-prior) coefficients divided by 2.
-  # Here the informative coefficients are q binary + p linear + sum(d) nonlinear
-  # DR-basis + s spatial coefficients (all have Gaussian priors; only the flat
-  # intercept beta0 has no prior), so w_num = (q + p + sum(d) + s) / 2.
-  w_num <- (P - 1) / 2
-  if (!is.null(seed)) {set.seed(seed)}
-  
-  start_Kfold <- Sys.time()
-  K <- K_fold
-  if (verbose > 0) cat("Start ", K, "-fold CV. ", sep = "")
-  fold_id <- sample(rep(1:K, length.out = n))
-  
-  CV <- sapply(1:K, function(f) {
-    test_idx  <- which(fold_id == f)
-    train_idx <- setdiff(seq_len(n), test_idx)
-    
-    est <- optim(
-      par = beta0,
-      fn = function(b) {
-        lin_pred = X[train_idx, , drop = FALSE] %*% b
-        sum(freq[train_idx] * loss_fun(y[train_idx] - link(lin_pred), k, c))
-      },
-      method = "L-BFGS-B"
-    )$par
-    
-    sum(freq[test_idx] * loss_fun(y[test_idx] - link(X[test_idx, , drop = FALSE] %*% est), k, c))
-  })
-  
-  mean_cv <- sum(CV) / sum(freq)
-  w <- w_num / mean_cv
-  end_Kfold <- Sys.time()
-  diff_time_kfold = round(difftime(end_Kfold, start_Kfold, units = "mins"), 2)
-  if (verbose > 0) cat("End CV. \t", "Exec. time: ", diff_time_kfold, " mins \n\n", sep = "")
+  # Conditional on the block variances, the closed-form UILC numerator is
+  # the number of Gaussian-prior regression coefficients divided by 2.
+  # Here the informative coefficients are 1 intercept + q binary + p linear + sum(d) nonlinear
+  # DR-basis + s spatial coefficients (all have Gaussian priors),
+  # so w_num = (1 + q + p + sum(d) + s) / 2 = P / 2.
+  calibration <- calibrate_nils(X, y, beta0, k, c, freq = freq,
+    link = link, link_prime = link_prime, K_fold = K_fold, seed = seed, verbose = verbose,
+    optim_warn = optim_warn, optim_retry = optim_retry, optim_retry_factor = optim_retry_factor,
+    cv_optim_control = cv_optim_control, optim_ntry_cv = optim_ntry_cv,
+    cv_analytic_gradient = cv_analytic_gradient)
+  w <- calibration$w
   
   
   # --- Storage ---
@@ -230,8 +320,12 @@ MCMC_IWLS <- function(niter,
   
   # --- Initial values ---
   beta_curr <- unname(drop(beta0))
-  tau <- rep(10, q + p + (!is.null(Z_cont))*p + 1*(s>0))
-  
+  tau <- rep(10, q + p + (!is.null(Z_cont))*p)
+  if (!is.null(Z_spat)){
+    tau <- c(tau, 10)
+  } else if (!is.null(X_GMRF)){
+    tau <- c(tau, 1)
+  }
   
   # Maps beta[-1] to the corresponding tau component:
   # first q coefficients are binary covariates,
@@ -244,6 +338,12 @@ MCMC_IWLS <- function(niter,
     if (p_nonlin > 0) q + p + rep(seq_len(p), d) else integer(0),
     if (s > 0) rep(q + p + p_nonlin + 1, s) else integer(0)
   )
+
+  # Initialize nonlinear blocks after their coefficient-to-variance mapping exists.
+  nonlinear_tau_idx <- q + p + seq_len(p_nonlin)
+  nonlinear_beta_idx <- 1L + which(tau_idx %in% nonlinear_tau_idx)
+  beta_curr[nonlinear_beta_idx] <- 0
+  tau[nonlinear_tau_idx] <- 1
   
   # IG shape 
   IG_size_vec <- c(rep(1, q + p), 
@@ -312,6 +412,7 @@ MCMC_IWLS <- function(niter,
       c_post = c, c_deriv = c_deriv, 
       w = w,
       tau = tau, tau_idx = tau_idx,
+      intercept_mean = intercept_mean, intercept_sd = intercept_sd,
       hess_eps = hess_eps,
       step = step
     )
@@ -336,6 +437,7 @@ MCMC_IWLS <- function(niter,
           c_post = c, c_deriv = c_deriv, 
           w = w,
           tau = tau, tau_idx = tau_idx,
+          intercept_mean = intercept_mean, intercept_sd = intercept_sd,
           hess_eps = hess_eps,
           step = step
         )
@@ -361,6 +463,7 @@ MCMC_IWLS <- function(niter,
           c_post = c, c_deriv = c_deriv, 
           w = w,
           tau = tau, tau_idx = tau_idx,
+          intercept_mean = intercept_mean, intercept_sd = intercept_sd,
           hess_eps = hess_eps,
           step = step
         )
@@ -388,6 +491,7 @@ MCMC_IWLS <- function(niter,
           c_post = c, c_deriv = c_deriv, 
           w = w,
           tau = tau, tau_idx = tau_idx,
+          intercept_mean = intercept_mean, intercept_sd = intercept_sd,
           hess_eps = hess_eps,
           step = step
         )
@@ -420,6 +524,7 @@ MCMC_IWLS <- function(niter,
           c_post = c, c_deriv = c_deriv,
           w = w,
           tau = tau, tau_idx = tau_idx,
+          intercept_mean = intercept_mean, intercept_sd = intercept_sd,
           hess_eps = hess_eps,
           step = step/4
         )
@@ -446,6 +551,7 @@ MCMC_IWLS <- function(niter,
     #   c_post = c, c_deriv = c_deriv, 
     #   w = w,
     #   tau = tau, tau_idx = tau_idx,
+    #   intercept_mean = intercept_mean, intercept_sd = intercept_sd,
     #   hess_eps = hess_eps,
     #   step = step/4
     # )
@@ -472,6 +578,7 @@ MCMC_IWLS <- function(niter,
         c_post = c, c_deriv = c_deriv,
         w = w,
         tau = tau, tau_idx = tau_idx,
+        intercept_mean = intercept_mean, intercept_sd = intercept_sd,
         hess_eps = hess_eps,
         step = step/4
       )
@@ -580,13 +687,17 @@ MCMC_IWLS <- function(niter,
                     re_sigma2u = if (use_re) acc_re_sigma2u / niter else NULL,
                     spat_sdp = if (is.null(K_GMRF)) NULL else acc_spat_sdp / niter),
     logpost = logpost_sample,
-    w = w
+    intercept_prior = list(mean = intercept_mean, sd = intercept_sd),
+    calibration = calibration
   )
 }
 
 # DEPRECATED SAMPLER (MCMC_IWLS_basic_deprecated) ----
 #' DEPRECATED. MCMC sampler (IWLS proposals) for mode regression on a single
 #' additive predictor, without random effects. DO NOT USE for new analyses.
+#' Historical flat-intercept implementation: it has not been updated to pass
+#' the Gaussian intercept prior arguments now required by iwls_beta_update(),
+#' and is not compatible with the current shared helper interface.
 #'
 #' Superseded by MCMC_IWLS_bikes, the main sampler, which also handles binary,
 #' continuous (linear + DR-nonlinear) and spatial terms plus random intercepts;
