@@ -312,8 +312,6 @@ boot_CI <- function(B = 100L, dat, predictor, new_x, method,
 
   for (b in seq_len(B)) {
     
-    if (b %% 10 == 0) { cat(b, "\t")}
-    
     idx <- integer(n)
     for (group in strata) idx[group] <- group[sample.int(length(group), length(group), replace = TRUE)]
     datboot <- dat[idx, , drop = FALSE]
@@ -718,8 +716,6 @@ results_on_train <- function(s, xval_l = -0.5, xval_u = 0.5, xval_N = 100,
               stopifnot(isTRUE(all.equal(unname(V), unname(V_region[region_id, , drop = FALSE]))))
               ## Regional reconstruction must reproduce observation-level effects.
               stopifnot(isTRUE(all.equal(unname(D), unname(D_grid[, region_id, drop = FALSE]))))
-
-              print(list(model = mod, centering = centering_check))
 
               pe <- colMeans(D)
               pe_grid <- colMeans(D_grid)
