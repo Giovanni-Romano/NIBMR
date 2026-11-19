@@ -6,6 +6,7 @@
 # simulation replicates, or write result files.
 # === === === === === === === === === === === === === === === === === === ===
 
+source("src/sim-study/00-progress.R", local = TRUE)
 library(coda)
 
 # Naming and centering conventions used below
@@ -408,6 +409,9 @@ boot_CI <- function(B = 100L, dat, predictor, new_x, method,
 #' @param grid_chunk_size Maximum grid combinations summarized at once for
 #'   posterior surfaces (default 512). Every location still uses all draws.
 #'   Smaller batches use less temporary memory; returned summaries are unchanged.
+#' @param verbose Print concise extraction start/completion messages.
+#' @param engine_output Show routine engine/bootstrap prints (default FALSE).
+#'   Warnings and errors remain visible in either mode.
 #' @return A list indexed by model (m0, ..., m5 as present in s). Each contains:
 #'   - point_est: int (scalar), and observation-level effect vectors.
 #'   - point_est_grid: int (scalar); f1/f2 and their available L/NL components
@@ -450,402 +454,398 @@ boot_CI <- function(B = 100L, dat, predictor, new_x, method,
 #' # For centered effect comparisons, use f1/f2/spat/f from aligned truth.
 results_on_train <- function(s, xval_l = -0.5, xval_u = 0.5, xval_N = 100,
                              probs = c(0.025, 0.975), B_M3 = 100L, boot_seed = s$scenario$seed,
-                             boot_chunk_size = 512L, grid_chunk_size = 512L) {
-  stopifnot(length(grid_chunk_size) == 1L, is.finite(grid_chunk_size),
-            grid_chunk_size >= 1, grid_chunk_size == floor(grid_chunk_size))
-  
-  stopifnot("Models in fits should match those in designs. The names of the two objects do not coincide." =  
-              all(names(s$fits) == names(s$designs)))
-  
-  # Extract main objects
-  pred <- s$scenario$predictor
-  dat <- s$scenario$dat
-  des <- s$designs
-  models <- names(s$fits)
-  
-  # Helpers for spatial effects
-  region_levels <- levels(dat$region)
-  region_id <- match(as.character(dat$region), region_levels)
-  ## One observation representing each region, in factor-level order.
-  first_row <- match(region_levels, as.character(dat$region))
-  if (anyNA(first_row)) {stop("Regional extraction requires every region to be observed.")}
-  
-  # Define values for the fit on the grid (will be used both for x1 and x2)
-  new_x <- seq(xval_l, xval_u, length = xval_N)
-  ## Helpers to compute surface-type effects, since f(x1, x2) is defined on R^2
-  ### Ordering agrees with as.vector(outer(f1, f2, "+")): x1 varies fastest, then x2.
-  grid_i1 <- rep(seq_len(xval_N), times = xval_N)
-  grid_i2 <- rep(seq_len(xval_N), each = xval_N)
-  grid_names <- list(x1 = as.character(new_x), x2 = as.character(new_x))
-  ### Convert xval_N^2 values into an x1-by-x2 surface.
-  as_surface <- function(z) {
-    stopifnot(length(z) == xval_N * xval_N)
-    matrix(z, nrow = xval_N, ncol = xval_N, dimnames = grid_names)
-  }
-  ### Convert a (xval_N^2)-by-2 CI matrix into a surface of intervals.
-  as_interval_surface <- function(z) {
-    stopifnot(nrow(z) == xval_N * xval_N, ncol(z) == 2L)
-    array(as.numeric(z), dim = c(xval_N, xval_N, 2L), dimnames = c(grid_names, list(bound = c("LB", "UP"))))
-  }
-  
-  # Define nominal level from probs
-  cred_mass = probs[2] - probs[1]
+                             boot_chunk_size = 512L, grid_chunk_size = 512L,
+                             verbose = TRUE, engine_output = FALSE) {
+  label <- if ("m3" %in% names(s$fits) && !is.null(s$fits$m3) && B_M3 > 0L)
+    sprintf("Extracting effects and intervals (M3 bootstrap B=%d)", B_M3) else
+      "Extracting effects and intervals"
+  run_stage(label, {
+    stopifnot(length(grid_chunk_size) == 1L, is.finite(grid_chunk_size),
+              grid_chunk_size >= 1, grid_chunk_size == floor(grid_chunk_size))
 
-  # Keep summaries for the whole grid, but detailed draws for only one batch.
-  # A batch contains grid locations, not a subset of posterior draws.
-  summarize_surfaces <- function(f1, f2, intercept, spatial = NULL) {
-    empty_summary <- function() list(point_est = numeric(xval_N^2),
-      CI_quant = matrix(NA_real_, xval_N^2, 2L), CI_hpd = matrix(NA_real_, xval_N^2, 2L))
-    save_batch <- function(out, D, points) {
-      out$point_est[points] <- colMeans(D)
-      out$CI_quant[points, ] <- t(apply(D, 2L, quantile, probs = probs))
-      out$CI_hpd[points, ] <- coda::HPDinterval(coda::as.mcmc(D), prob = cred_mass)
-      out
-    }
-    finish <- function(out) list(point_est = as_surface(out$point_est),
-      CI_quant = as_interval_surface(out$CI_quant), CI_hpd = as_interval_surface(out$CI_hpd))
-    finish_regions <- function(out) {
-      out <- lapply(out, finish)
-      list(point_est = lapply(out, `[[`, "point_est"),
-           CI_quant = lapply(out, `[[`, "CI_quant"), CI_hpd = lapply(out, `[[`, "CI_hpd"))
-    }
-    continuous <- continuous_full <- empty_summary()
-    n_regions <- if (is.null(spatial)) 1L else ncol(spatial)
-    regional <- full <- replicate(n_regions, empty_summary(), simplify = FALSE)
-    names(regional) <- names(full) <- colnames(spatial)
+    stopifnot("Models in fits should match those in designs. The names of the two objects do not coincide." =
+                all(names(s$fits) == names(s$designs)))
 
-    for (first in seq.int(1L, xval_N^2, by = grid_chunk_size)) {
-      points <- seq.int(first, min(xval_N^2, first + grid_chunk_size - 1L))
-      # Compute the covariate sum once per batch and reuse it in every region.
-      # Keep x1 varying fastest, as in the original complete surface matrix.
-      D_cont <- f1[, grid_i1[points], drop = FALSE] + f2[, grid_i2[points], drop = FALSE]
-      continuous <- save_batch(continuous, D_cont, points)
-      if (!is.null(spatial)) {
-        continuous_full <- save_batch(continuous_full, sweep(D_cont, 1L, intercept, "+"), points)
+    # Extract main objects
+    pred <- s$scenario$predictor
+    dat <- s$scenario$dat
+    des <- s$designs
+    models <- names(s$fits)
+
+    # Helpers for spatial effects
+    region_levels <- levels(dat$region)
+    region_id <- match(as.character(dat$region), region_levels)
+    ## One observation representing each region, in factor-level order.
+    first_row <- match(region_levels, as.character(dat$region))
+    if (anyNA(first_row)) {stop("Regional extraction requires every region to be observed.")}
+
+    # Define values for the fit on the grid (will be used both for x1 and x2)
+    new_x <- seq(xval_l, xval_u, length = xval_N)
+    ## Helpers to compute surface-type effects, since f(x1, x2) is defined on R^2
+    ### Ordering agrees with as.vector(outer(f1, f2, "+")): x1 varies fastest, then x2.
+    grid_i1 <- rep(seq_len(xval_N), times = xval_N)
+    grid_i2 <- rep(seq_len(xval_N), each = xval_N)
+    grid_names <- list(x1 = as.character(new_x), x2 = as.character(new_x))
+    ### Convert xval_N^2 values into an x1-by-x2 surface.
+    as_surface <- function(z) {
+      stopifnot(length(z) == xval_N * xval_N)
+      matrix(z, nrow = xval_N, ncol = xval_N, dimnames = grid_names)
+    }
+    ### Convert a (xval_N^2)-by-2 CI matrix into a surface of intervals.
+    as_interval_surface <- function(z) {
+      stopifnot(nrow(z) == xval_N * xval_N, ncol(z) == 2L)
+      array(as.numeric(z), dim = c(xval_N, xval_N, 2L), dimnames = c(grid_names, list(bound = c("LB", "UP"))))
+    }
+
+    # Define nominal level from probs
+    cred_mass = probs[2] - probs[1]
+
+    # Keep summaries for the whole grid, but detailed draws for only one batch.
+    # A batch contains grid locations, not a subset of posterior draws.
+    summarize_surfaces <- function(f1, f2, intercept, spatial = NULL) {
+      empty_summary <- function() list(point_est = numeric(xval_N^2),
+        CI_quant = matrix(NA_real_, xval_N^2, 2L), CI_hpd = matrix(NA_real_, xval_N^2, 2L))
+      save_batch <- function(out, D, points) {
+        out$point_est[points] <- colMeans(D)
+        out$CI_quant[points, ] <- t(apply(D, 2L, quantile, probs = probs))
+        out$CI_hpd[points, ] <- coda::HPDinterval(coda::as.mcmc(D), prob = cred_mass)
+        out
       }
-      for (r in seq_len(n_regions)) {
-        if (is.null(spatial)) {
-          D_region <- D_cont
-        } else {
-          # Add region r's effect from the SAME draw to each grid location.
-          D_region <- D_cont + spatial[, r]
-          regional[[r]] <- save_batch(regional[[r]], D_region, points)
+      finish <- function(out) list(point_est = as_surface(out$point_est),
+        CI_quant = as_interval_surface(out$CI_quant), CI_hpd = as_interval_surface(out$CI_hpd))
+      finish_regions <- function(out) {
+        out <- lapply(out, finish)
+        list(point_est = lapply(out, `[[`, "point_est"),
+             CI_quant = lapply(out, `[[`, "CI_quant"), CI_hpd = lapply(out, `[[`, "CI_hpd"))
+      }
+      continuous <- continuous_full <- empty_summary()
+      n_regions <- if (is.null(spatial)) 1L else ncol(spatial)
+      regional <- full <- replicate(n_regions, empty_summary(), simplify = FALSE)
+      names(regional) <- names(full) <- colnames(spatial)
+
+      for (first in seq.int(1L, xval_N^2, by = grid_chunk_size)) {
+        points <- seq.int(first, min(xval_N^2, first + grid_chunk_size - 1L))
+        # Compute the covariate sum once per batch and reuse it in every region.
+        # Keep x1 varying fastest, as in the original complete surface matrix.
+        D_cont <- f1[, grid_i1[points], drop = FALSE] + f2[, grid_i2[points], drop = FALSE]
+        continuous <- save_batch(continuous, D_cont, points)
+        if (!is.null(spatial)) {
+          continuous_full <- save_batch(continuous_full, sweep(D_cont, 1L, intercept, "+"), points)
         }
-        # Add each draw's intercept before intervals, retaining its dependence
-        # with the other effects. Only the small batch is held in memory.
-        D_full <- sweep(D_region, 1L, intercept, "+")
-        full[[r]] <- save_batch(full[[r]], D_full, points)
+        for (r in seq_len(n_regions)) {
+          if (is.null(spatial)) {
+            D_region <- D_cont
+          } else {
+            # Add region r's effect from the SAME draw to each grid location.
+            D_region <- D_cont + spatial[, r]
+            regional[[r]] <- save_batch(regional[[r]], D_region, points)
+          }
+          # Add each draw's intercept before intervals, retaining its dependence
+          # with the other effects. Only the small batch is held in memory.
+          D_full <- sweep(D_region, 1L, intercept, "+")
+          full[[r]] <- save_batch(full[[r]], D_full, points)
+        }
       }
+      continuous <- finish(continuous)
+      list(fcont = continuous,
+           fcont_full = if (is.null(spatial)) finish(full[[1L]]) else finish(continuous_full),
+           f = if (is.null(spatial)) continuous else finish_regions(regional),
+           f_full = if (is.null(spatial)) finish(full[[1L]]) else finish_regions(full))
     }
-    continuous <- finish(continuous)
-    list(fcont = continuous,
-         fcont_full = if (is.null(spatial)) finish(full[[1L]]) else finish(continuous_full),
-         f = if (is.null(spatial)) continuous else finish_regions(regional),
-         f_full = if (is.null(spatial)) finish(full[[1L]]) else finish_regions(full))
-  }
-  
-  # Container for results
-  res <- list()
-  
-  
-  
-  for (mod in models){
-    if (mod == "m4" && is.null(s$fits[[mod]]$draws)) {
-      res[mod] <- list(NULL)
-      next
-    }
-    
-    if (mod == "m3"){
-      beta <- s$fits[[mod]]$beta
-      draws <- matrix(beta, ncol = length(beta))
-      colnames(draws) <- names(beta)
-      draws
-    } else {
-      draws <- s$fits[[mod]]$draws
-    }
-    
-    X <- s$designs[[mod]]$X
-    
-    new_xtilde1 <- (new_x - mean(dat[ , "x1"]))/sd(dat[ , "x1"])
-    new_xtilde2 <- (new_x - mean(dat[ , "x2"]))/sd(dat[ , "x2"])
-    
-    spat_idx <- NULL
-    if (pred == "X3") {
-      spat_idx <- grep(if (mod == "m4") "^region" else "^gmrf", colnames(draws))
-    }
-    
-    # M0/M2/M3/M5 use equal-region centering: sum_r gamma_r = 0.
-    # M1 uses observation-weighted centering; M4 uses a reference region.
-    # Recenter their regional effects and shift each draw's intercept so all
-    # fitted predictions are preserved. Legacy M4 fits without regional
-    # coefficients retain their previous, nonspatial extraction.
-    if (pred == "X3" && (mod == "m1" || (mod == "m4" && length(spat_idx) > 0L))) {
-      spatial_idx <- spat_idx
-      intercept_idx <- match("Intercept", colnames(draws))
-      stopifnot(length(spatial_idx) > 0L, !is.na(intercept_idx), !anyNA(first_row))
-      
-      # Mean regional basis row; each draw's shift is b %*% a.
-      a <- colMeans(X[first_row, spatial_idx, drop = FALSE])
-      shift <- drop(draws[, spatial_idx, drop = FALSE] %*% a)
-      
-      draws[, intercept_idx] <- draws[, intercept_idx] + shift
-      X[, spatial_idx] <- sweep(X[, spatial_idx, drop = FALSE], 2L, a, "-")
-    }
-    
-    if (mod %in% c("m0", "m5")){
-      dr1 <- des[[mod]]$dr1
-      dr2 <- des[[mod]]$dr2
-      
-      new_B1 <- Predict.matrix(dr1$smooth_object, data.frame(x = new_x))
-      new_B2 <- Predict.matrix(dr2$smooth_object, data.frame(x = new_x))
-      
-      new_Z1 <- new_B1 %*% dr1$Trafo
-      new_Z2 <- new_B2 %*% dr2$Trafo
-      
-      new_X <- cbind(1, new_xtilde1, new_xtilde2, new_Z1, new_Z2)
-    } else if (mod == "m1"){
-      sm <- des[[mod]]$full_info$mu$smooth.construct
-      sm1 <- sm$`s(x1)`
-      sm2 <- sm$`s(x2)`
-      
-      new_TP1 <- PredictMat(sm1, setNames(data.frame(new_x), sm1$term))
-      new_TP2 <- PredictMat(sm2, setNames(data.frame(new_x), sm2$term))
-      
-      new_X <- cbind(1, new_TP1, new_TP2)
-    } else if (mod == "m2" | mod == "m4") {
-      new_X <- cbind(1, new_xtilde1, new_xtilde2)
-    } else if (mod == "m3"){
-      
-      bs1 <- des[[mod]]$bs1
-      bs2 <- des[[mod]]$bs2
-      
-      new_B1 <- PredictMat(bs1, data.frame(x = new_x))
-      new_B2 <- PredictMat(bs2, data.frame(x = new_x))
-      
-      new_X <- cbind(1, new_B1, new_B2)
-    }
-    
-    
-    int_idx <- 1
-    x1L_idx <- which(colnames(draws) == "x1")
-    x1NL_idx <- grep("x1.s", colnames(draws))
-    x2L_idx <- which(colnames(draws) == "x2")
-    x2NL_idx <- grep("x2.s", colnames(draws))
-    effects_idx <- list(int = int_idx, 
-                        f1L = x1L_idx, f1NL = x1NL_idx, f1 = c(x1L_idx, x1NL_idx),
-                        f2L = x2L_idx, f2NL = x2NL_idx, f2 = c(x2L_idx, x2NL_idx),
-                        spat = spat_idx)
-    effects_idx[["fcont"]] <- c(effects_idx$f1, effects_idx$f2)
-    effects_idx[["f"]] <- c(effects_idx$fcont, effects_idx$spat)
-    
-    effects_idx <- lapply(effects_idx, function(x) if (length(x) == 0) NULL else x)
-    
-    if (mod != "m3"){
-      
-      point_est <- point_est_grid <- CI_quant <- CI_hpd <- vector(mode = "list", length = length(effects_idx))
-      names(point_est) <- names(point_est_grid) <- names(CI_quant) <- names(CI_hpd) <- names(effects_idx)
-      
-      D_eff <- D_eff_grid <- vector(mode = "list", length = length(effects_idx))
-      names(D_eff) <- names(D_eff_grid) <- names(effects_idx)
-      
-      for (E in seq_along(effects_idx)){
-        
-        eff <- names(effects_idx)[E]
-        eff_idx <- effects_idx[[E]]
-        
-        if (is.null(eff_idx)){
-          NULL
-        } else {
-          if (eff == "int"){
-            # Compute
-            D <- draws[ , 1]
-            D_grid <- draws[ , 1]
-            pe <- mean(D)
-            pe_grid <- mean(D_grid) 
-            quant <- quantile(D_grid, probs = probs)
-            hpd <- HPDinterval(as.mcmc(D_grid), prob = cred_mass)
-            names(quant) <- names(hpd) <- c("LB", "UP")
-            
-            # Save
-            D_eff[[eff]] <- D; D_eff_grid[[eff]] <- D_grid
-            point_est[[eff]] <- unname(pe); point_est_grid[[eff]] <- unname(pe_grid)
-            CI_quant[[eff]] <- quant
-            CI_hpd[[eff]] <- hpd
-          } else if (eff %in% c("f1L", "f1NL", "f1", "f2L", "f2NL", "f2")){
-            # Compute
-            D <- draws[ , eff_idx] %*% t(X[ , eff_idx])
-            D_grid <- draws[ , eff_idx] %*% t(new_X[ , eff_idx])
-            pe <- colMeans(D)
-            pe_grid <- colMeans(D_grid)
-            quant <- t(apply(D_grid, 2, quantile, probs = probs))
-            hpd <- HPDinterval(as.mcmc(D_grid), prob = cred_mass)
-            colnames(quant) <- colnames(hpd) <- c("LB", "UP")
-            
-            # Save
-            D_eff[[eff]] <- D; D_eff_grid[[eff]] <- D_grid
-            point_est[[eff]] <- unname(pe); point_est_grid[[eff]] <- unname(pe_grid)
-            CI_quant[[eff]] <- quant
-            CI_hpd[[eff]] <- hpd
-          } else if (eff == "fcont"){
-            # Training draws stay as before. Grid surfaces are summarized in
-            # batches after the component loop, once regional draws are ready.
-            D <- D_eff$f1 + D_eff$f2
-            pe <- point_est$f1 + point_est$f2
-            D_eff[[eff]] <- D
-            point_est[[eff]] <- unname(pe)
-          } else if (eff == "spat"){
-            # Compute
-            V <- X[, eff_idx, drop = FALSE]
-            ## Extract one row for each region, in factor-level (i.e. region) order
-            V_region <- V[first_row, , drop = FALSE]
-            rownames(V_region) <- region_levels
-            D_region <- draws[, eff_idx, drop = FALSE]
-            D <- D_region %*% t(V)
-            D_grid <- D_region %*% t(V_region)
-            colnames(D_grid) <- region_levels
-            
-            # Couple of checks
-            ## Every observation must use its region's design row.
-            stopifnot(isTRUE(all.equal(unname(V), unname(V_region[region_id, , drop = FALSE]))))
-            ## Regional reconstruction must reproduce observation-level effects.
-            stopifnot(isTRUE(all.equal(unname(D), unname(D_grid[, region_id, drop = FALSE]))))
-            
-            counts <- tabulate(region_id, nbins = length(region_levels))
-            
-            centering_check <- c(
-              equal_region = max(abs(colMeans(V_region))),
-              observation_weighted = max(abs(
-                drop(crossprod(counts / sum(counts), V_region))
-              ))
-            )
-            
-            print(list(model = mod, centering = centering_check))
-            
-            pe <- colMeans(D)
-            pe_grid <- colMeans(D_grid)
-            quant <- t(apply(D_grid, 2, quantile, probs = probs))
-            hpd <- HPDinterval(as.mcmc(D_grid), prob = cred_mass)
-            colnames(quant) <- colnames(hpd) <- c("LB", "UP")
-            
-            # Save
-            D_eff[[eff]] <- D; D_eff_grid[[eff]] <- D_grid
-            point_est[[eff]] <- unname(pe); point_est_grid[[eff]] <- unname(pe_grid)
-            CI_quant[[eff]] <- quant
-            CI_hpd[[eff]] <- hpd
-          } else if (eff == "f"){
-            if (is.null(effects_idx$spat)){
-              D_eff[[eff]] <- D_eff[["fcont"]]
-              point_est[[eff]] <- point_est[["fcont"]]
-            } else {
-              D <- D_eff$spat + D_eff$fcont
-              pe <- point_est$fcont + point_est$spat
+
+    # Container for results
+    res <- list()
+
+
+
+    for (mod in models){
+      if (mod == "m4" && is.null(s$fits[[mod]]$draws)) {
+        res[mod] <- list(NULL)
+        next
+      }
+
+      if (mod == "m3"){
+        beta <- s$fits[[mod]]$beta
+        draws <- matrix(beta, ncol = length(beta))
+        colnames(draws) <- names(beta)
+        draws
+      } else {
+        draws <- s$fits[[mod]]$draws
+      }
+
+      X <- s$designs[[mod]]$X
+
+      new_xtilde1 <- (new_x - mean(dat[ , "x1"]))/sd(dat[ , "x1"])
+      new_xtilde2 <- (new_x - mean(dat[ , "x2"]))/sd(dat[ , "x2"])
+
+      spat_idx <- NULL
+      if (pred == "X3") {
+        spat_idx <- grep(if (mod == "m4") "^region" else "^gmrf", colnames(draws))
+      }
+
+      # M0/M2/M3/M5 use equal-region centering: sum_r gamma_r = 0.
+      # M1 uses observation-weighted centering; M4 uses a reference region.
+      # Recenter their regional effects and shift each draw's intercept so all
+      # fitted predictions are preserved. Legacy M4 fits without regional
+      # coefficients retain their previous, nonspatial extraction.
+      if (pred == "X3" && (mod == "m1" || (mod == "m4" && length(spat_idx) > 0L))) {
+        spatial_idx <- spat_idx
+        intercept_idx <- match("Intercept", colnames(draws))
+        stopifnot(length(spatial_idx) > 0L, !is.na(intercept_idx), !anyNA(first_row))
+
+        # Mean regional basis row; each draw's shift is b %*% a.
+        a <- colMeans(X[first_row, spatial_idx, drop = FALSE])
+        shift <- drop(draws[, spatial_idx, drop = FALSE] %*% a)
+
+        draws[, intercept_idx] <- draws[, intercept_idx] + shift
+        X[, spatial_idx] <- sweep(X[, spatial_idx, drop = FALSE], 2L, a, "-")
+      }
+
+      if (mod %in% c("m0", "m5")){
+        dr1 <- des[[mod]]$dr1
+        dr2 <- des[[mod]]$dr2
+
+        new_B1 <- Predict.matrix(dr1$smooth_object, data.frame(x = new_x))
+        new_B2 <- Predict.matrix(dr2$smooth_object, data.frame(x = new_x))
+
+        new_Z1 <- new_B1 %*% dr1$Trafo
+        new_Z2 <- new_B2 %*% dr2$Trafo
+
+        new_X <- cbind(1, new_xtilde1, new_xtilde2, new_Z1, new_Z2)
+      } else if (mod == "m1"){
+        sm <- des[[mod]]$full_info$mu$smooth.construct
+        sm1 <- sm$`s(x1)`
+        sm2 <- sm$`s(x2)`
+
+        new_TP1 <- PredictMat(sm1, setNames(data.frame(new_x), sm1$term))
+        new_TP2 <- PredictMat(sm2, setNames(data.frame(new_x), sm2$term))
+
+        new_X <- cbind(1, new_TP1, new_TP2)
+      } else if (mod == "m2" | mod == "m4") {
+        new_X <- cbind(1, new_xtilde1, new_xtilde2)
+      } else if (mod == "m3"){
+
+        bs1 <- des[[mod]]$bs1
+        bs2 <- des[[mod]]$bs2
+
+        new_B1 <- PredictMat(bs1, data.frame(x = new_x))
+        new_B2 <- PredictMat(bs2, data.frame(x = new_x))
+
+        new_X <- cbind(1, new_B1, new_B2)
+      }
+
+
+      int_idx <- 1
+      x1L_idx <- which(colnames(draws) == "x1")
+      x1NL_idx <- grep("x1.s", colnames(draws))
+      x2L_idx <- which(colnames(draws) == "x2")
+      x2NL_idx <- grep("x2.s", colnames(draws))
+      effects_idx <- list(int = int_idx,
+                          f1L = x1L_idx, f1NL = x1NL_idx, f1 = c(x1L_idx, x1NL_idx),
+                          f2L = x2L_idx, f2NL = x2NL_idx, f2 = c(x2L_idx, x2NL_idx),
+                          spat = spat_idx)
+      effects_idx[["fcont"]] <- c(effects_idx$f1, effects_idx$f2)
+      effects_idx[["f"]] <- c(effects_idx$fcont, effects_idx$spat)
+
+      effects_idx <- lapply(effects_idx, function(x) if (length(x) == 0) NULL else x)
+
+      if (mod != "m3"){
+
+        point_est <- point_est_grid <- CI_quant <- CI_hpd <- vector(mode = "list", length = length(effects_idx))
+        names(point_est) <- names(point_est_grid) <- names(CI_quant) <- names(CI_hpd) <- names(effects_idx)
+
+        D_eff <- D_eff_grid <- vector(mode = "list", length = length(effects_idx))
+        names(D_eff) <- names(D_eff_grid) <- names(effects_idx)
+
+        for (E in seq_along(effects_idx)){
+
+          eff <- names(effects_idx)[E]
+          eff_idx <- effects_idx[[E]]
+
+          if (is.null(eff_idx)){
+            NULL
+          } else {
+            if (eff == "int"){
+              # Compute
+              D <- draws[ , 1]
+              D_grid <- draws[ , 1]
+              pe <- mean(D)
+              pe_grid <- mean(D_grid)
+              quant <- quantile(D_grid, probs = probs)
+              hpd <- HPDinterval(as.mcmc(D_grid), prob = cred_mass)
+              names(quant) <- names(hpd) <- c("LB", "UP")
+
+              # Save
+              D_eff[[eff]] <- D; D_eff_grid[[eff]] <- D_grid
+              point_est[[eff]] <- unname(pe); point_est_grid[[eff]] <- unname(pe_grid)
+              CI_quant[[eff]] <- quant
+              CI_hpd[[eff]] <- hpd
+            } else if (eff %in% c("f1L", "f1NL", "f1", "f2L", "f2NL", "f2")){
+              # Compute
+              D <- draws[ , eff_idx] %*% t(X[ , eff_idx])
+              D_grid <- draws[ , eff_idx] %*% t(new_X[ , eff_idx])
+              pe <- colMeans(D)
+              pe_grid <- colMeans(D_grid)
+              quant <- t(apply(D_grid, 2, quantile, probs = probs))
+              hpd <- HPDinterval(as.mcmc(D_grid), prob = cred_mass)
+              colnames(quant) <- colnames(hpd) <- c("LB", "UP")
+
+              # Save
+              D_eff[[eff]] <- D; D_eff_grid[[eff]] <- D_grid
+              point_est[[eff]] <- unname(pe); point_est_grid[[eff]] <- unname(pe_grid)
+              CI_quant[[eff]] <- quant
+              CI_hpd[[eff]] <- hpd
+            } else if (eff == "fcont"){
+              # Training draws stay as before. Grid surfaces are summarized in
+              # batches after the component loop, once regional draws are ready.
+              D <- D_eff$f1 + D_eff$f2
+              pe <- point_est$f1 + point_est$f2
               D_eff[[eff]] <- D
               point_est[[eff]] <- unname(pe)
+            } else if (eff == "spat"){
+              # Compute
+              V <- X[, eff_idx, drop = FALSE]
+              ## Extract one row for each region, in factor-level (i.e. region) order
+              V_region <- V[first_row, , drop = FALSE]
+              rownames(V_region) <- region_levels
+              D_region <- draws[, eff_idx, drop = FALSE]
+              D <- D_region %*% t(V)
+              D_grid <- D_region %*% t(V_region)
+              colnames(D_grid) <- region_levels
+
+              # Couple of checks
+              ## Every observation must use its region's design row.
+              stopifnot(isTRUE(all.equal(unname(V), unname(V_region[region_id, , drop = FALSE]))))
+              ## Regional reconstruction must reproduce observation-level effects.
+              stopifnot(isTRUE(all.equal(unname(D), unname(D_grid[, region_id, drop = FALSE]))))
+
+              print(list(model = mod, centering = centering_check))
+
+              pe <- colMeans(D)
+              pe_grid <- colMeans(D_grid)
+              quant <- t(apply(D_grid, 2, quantile, probs = probs))
+              hpd <- HPDinterval(as.mcmc(D_grid), prob = cred_mass)
+              colnames(quant) <- colnames(hpd) <- c("LB", "UP")
+
+              # Save
+              D_eff[[eff]] <- D; D_eff_grid[[eff]] <- D_grid
+              point_est[[eff]] <- unname(pe); point_est_grid[[eff]] <- unname(pe_grid)
+              CI_quant[[eff]] <- quant
+              CI_hpd[[eff]] <- hpd
+            } else if (eff == "f"){
+              if (is.null(effects_idx$spat)){
+                D_eff[[eff]] <- D_eff[["fcont"]]
+                point_est[[eff]] <- point_est[["fcont"]]
+              } else {
+                D <- D_eff$spat + D_eff$fcont
+                pe <- point_est$fcont + point_est$spat
+                D_eff[[eff]] <- D
+                point_est[[eff]] <- unname(pe)
+              }
             }
           }
         }
-      }
 
-      # Retain only the compact surface summaries, not a draw matrix for every
-      # region and grid location. Curve and regional component draws are small.
-      surfaces <- summarize_surfaces(D_eff_grid$f1, D_eff_grid$f2, D_eff$int, D_eff_grid$spat)
-      for (eff in names(surfaces)) {
-        point_est_grid[[eff]] <- surfaces[[eff]]$point_est
-        CI_quant[[eff]] <- surfaces[[eff]]$CI_quant
-        CI_hpd[[eff]] <- surfaces[[eff]]$CI_hpd
-      }
-      res[[mod]] <- list(point_est = point_est, point_est_grid = point_est_grid,
-                         CI_quant = CI_quant, CI_hpd = CI_hpd)
-      
-    } else if (mod == "m3") {
-      point_est <- point_est_grid <- CI_quant <- setNames(
-        vector("list", length(effects_idx)), names(effects_idx))
-      boot_out <- m3_na_intervals(new_x, if (pred == "X3") region_levels else NULL)
-      if (B_M3 > 0L) {
-        boot_out <- boot_CI(B = B_M3, dat = dat, predictor = pred, new_x = new_x,
-          method = s$fits$m3$method, probs = probs, seed = boot_seed, chunk_size = boot_chunk_size)
-      }
-      # Bootstrap intervals are calculated once, outside this point-estimate loop.
-      for (eff in names(effects_idx)) {
-        idx <- effects_idx[[eff]]
-        if (is.null(idx)) next
-        if (eff == "int") {
-          point_est[[eff]] <- point_est_grid[[eff]] <- unname(beta[1L])
-        } else if (eff %in% c("f1NL", "f1", "f2NL", "f2")) {
-          point_est[[eff]] <- unname(drop(X[, idx, drop = FALSE] %*% beta[idx]))
-          point_est_grid[[eff]] <- unname(drop(new_X[, idx, drop = FALSE] %*% beta[idx]))
-        } else if (eff == "spat") {
-          point_est[[eff]] <- unname(drop(X[, idx, drop = FALSE] %*% beta[idx]))
-          point_est_grid[[eff]] <- unname(drop(des[[mod]]$region_contrasts %*% beta[idx]))
-        } else if (eff == "fcont") {
-          point_est[[eff]] <- point_est$f1 + point_est$f2
-          point_est_grid[[eff]] <- outer(point_est_grid$f1, point_est_grid$f2, "+")
-        } else if (eff == "f") {
-          point_est[[eff]] <- point_est$fcont + if (is.null(effects_idx$spat)) 0 else point_est$spat
-          point_est_grid[[eff]] <- if (is.null(effects_idx$spat)) point_est_grid$fcont else
-            lapply(point_est_grid$spat, function(gamma_r) {
-              surface <- point_est_grid$fcont + gamma_r
-              dimnames(surface) <- grid_names
-              surface
-            })
+        # Retain only the compact surface summaries, not a draw matrix for every
+        # region and grid location. Curve and regional component draws are small.
+        surfaces <- summarize_surfaces(D_eff_grid$f1, D_eff_grid$f2, D_eff$int, D_eff_grid$spat)
+        for (eff in names(surfaces)) {
+          point_est_grid[[eff]] <- surfaces[[eff]]$point_est
+          CI_quant[[eff]] <- surfaces[[eff]]$CI_quant
+          CI_hpd[[eff]] <- surfaces[[eff]]$CI_hpd
         }
-        CI_quant[eff] <- boot_out[eff]
-      }
-      res[[mod]] <- list(point_est = point_est, point_est_grid = point_est_grid,
-                         CI_quant = CI_quant)
-    }
+        res[[mod]] <- list(point_est = point_est, point_est_grid = point_est_grid,
+                           CI_quant = CI_quant, CI_hpd = CI_hpd)
 
-    # f_full is an additional field: existing f remains intercept-free.
-    # Posterior means add linearly, so the training mean can be reconstructed
-    # as mean(intercept) + mean(f). This shortcut is NOT valid for intervals.
-    res[[mod]]$point_est$f_full <- point_est$int + point_est$f
-    res[[mod]]$point_est$fcont_full <- point_est$int + point_est$fcont
-    if (mod == "m3") {
-      res[[mod]]$point_est_grid$fcont_full <- point_est_grid$int + point_est_grid$fcont
-      res[[mod]]$CI_quant$fcont_full <- boot_out$fcont_full
-      res[[mod]]$point_est_grid$f_full <- if (is.list(point_est_grid$f)) {
-        lapply(point_est_grid$f, function(z) point_est_grid$int + z)
-      } else {
-        point_est_grid$int + point_est_grid$f
+      } else if (mod == "m3") {
+        point_est <- point_est_grid <- CI_quant <- setNames(
+          vector("list", length(effects_idx)), names(effects_idx))
+        boot_out <- m3_na_intervals(new_x, if (pred == "X3") region_levels else NULL)
+        if (B_M3 > 0L) {
+          boot_out <- boot_CI(B = B_M3, dat = dat, predictor = pred, new_x = new_x,
+            method = s$fits$m3$method, probs = probs, seed = boot_seed, chunk_size = boot_chunk_size)
+        }
+        # Bootstrap intervals are calculated once, outside this point-estimate loop.
+        for (eff in names(effects_idx)) {
+          idx <- effects_idx[[eff]]
+          if (is.null(idx)) next
+          if (eff == "int") {
+            point_est[[eff]] <- point_est_grid[[eff]] <- unname(beta[1L])
+          } else if (eff %in% c("f1NL", "f1", "f2NL", "f2")) {
+            point_est[[eff]] <- unname(drop(X[, idx, drop = FALSE] %*% beta[idx]))
+            point_est_grid[[eff]] <- unname(drop(new_X[, idx, drop = FALSE] %*% beta[idx]))
+          } else if (eff == "spat") {
+            point_est[[eff]] <- unname(drop(X[, idx, drop = FALSE] %*% beta[idx]))
+            point_est_grid[[eff]] <- unname(drop(des[[mod]]$region_contrasts %*% beta[idx]))
+          } else if (eff == "fcont") {
+            point_est[[eff]] <- point_est$f1 + point_est$f2
+            point_est_grid[[eff]] <- outer(point_est_grid$f1, point_est_grid$f2, "+")
+          } else if (eff == "f") {
+            point_est[[eff]] <- point_est$fcont + if (is.null(effects_idx$spat)) 0 else point_est$spat
+            point_est_grid[[eff]] <- if (is.null(effects_idx$spat)) point_est_grid$fcont else
+              lapply(point_est_grid$spat, function(gamma_r) {
+                surface <- point_est_grid$fcont + gamma_r
+                dimnames(surface) <- grid_names
+                surface
+              })
+          }
+          CI_quant[eff] <- boot_out[eff]
+        }
+        res[[mod]] <- list(point_est = point_est, point_est_grid = point_est_grid,
+                           CI_quant = CI_quant)
       }
-      # f_full intervals include each bootstrap intercept before quantiles.
-      res[[mod]]$CI_quant$f_full <- boot_out$f_full
-    }
 
-    # Empirical affine projection gives a scalar slope in original x units.
-    # For M0/M2/M4/M5 this equals coefficient / sd(x). For M3 it separates the
-    # fitted spline without changing it. M1 has no requested slope summary.
-    if (mod != "m1") for (j in 1:2) {
-      x <- dat[[paste0("x", j)]]
-      weights <- (x - mean(x)) / sum((x - mean(x))^2)
-      key <- paste0("slope", j)
-      effect <- paste0("f", j)
+      # f_full is an additional field: existing f remains intercept-free.
+      # Posterior means add linearly, so the training mean can be reconstructed
+      # as mean(intercept) + mean(f). This shortcut is NOT valid for intervals.
+      res[[mod]]$point_est$f_full <- point_est$int + point_est$f
+      res[[mod]]$point_est$fcont_full <- point_est$int + point_est$fcont
       if (mod == "m3") {
-        res[[mod]]$point_est[[key]] <- sum(point_est[[effect]] * weights)
-        res[[mod]]$CI_quant[[key]] <- boot_out[[key]]
-      } else {
-        slope <- drop(D_eff[[effect]] %*% weights)
-        res[[mod]]$point_est[[key]] <- mean(slope)
-        res[[mod]]$CI_quant[[key]] <- setNames(as.numeric(quantile(slope, probs)), c("LB", "UP"))
-        res[[mod]]$CI_hpd[[key]] <- setNames(as.numeric(HPDinterval(as.mcmc(slope), prob = cred_mass)), c("LB", "UP"))
+        res[[mod]]$point_est_grid$fcont_full <- point_est_grid$int + point_est_grid$fcont
+        res[[mod]]$CI_quant$fcont_full <- boot_out$fcont_full
+        res[[mod]]$point_est_grid$f_full <- if (is.list(point_est_grid$f)) {
+          lapply(point_est_grid$f, function(z) point_est_grid$int + z)
+        } else {
+          point_est_grid$int + point_est_grid$f
+        }
+        # f_full intervals include each bootstrap intercept before quantiles.
+        res[[mod]]$CI_quant$f_full <- boot_out$f_full
       }
-    }
-    
-    res[[mod]]$grid <- new_x
-    res[[mod]]$interval_probs <- unname(probs)
-    pg <- res[[mod]]$point_est_grid
-    stopifnot(isTRUE(all.equal(unname(pg$fcont), unname(outer(pg$f1, pg$f2, "+")))))
-    
-    if (!is.null(effects_idx$spat)) {
-      stopifnot(length(pg$f) == length(pg$spat))
-      
-      for (r in seq_along(pg$spat)) {
-        stopifnot(isTRUE(all.equal(unname(pg$f[[r]]), unname(pg$fcont + pg$spat[r]))))
+
+      # Empirical affine projection gives a scalar slope in original x units.
+      # For M0/M2/M4/M5 this equals coefficient / sd(x). For M3 it separates the
+      # fitted spline without changing it. M1 has no requested slope summary.
+      if (mod != "m1") for (j in 1:2) {
+        x <- dat[[paste0("x", j)]]
+        weights <- (x - mean(x)) / sum((x - mean(x))^2)
+        key <- paste0("slope", j)
+        effect <- paste0("f", j)
+        if (mod == "m3") {
+          res[[mod]]$point_est[[key]] <- sum(point_est[[effect]] * weights)
+          res[[mod]]$CI_quant[[key]] <- boot_out[[key]]
+        } else {
+          slope <- drop(D_eff[[effect]] %*% weights)
+          res[[mod]]$point_est[[key]] <- mean(slope)
+          res[[mod]]$CI_quant[[key]] <- setNames(as.numeric(quantile(slope, probs)), c("LB", "UP"))
+          res[[mod]]$CI_hpd[[key]] <- setNames(as.numeric(HPDinterval(as.mcmc(slope), prob = cred_mass)), c("LB", "UP"))
+        }
       }
+
+      res[[mod]]$grid <- new_x
+      res[[mod]]$interval_probs <- unname(probs)
+      pg <- res[[mod]]$point_est_grid
+      stopifnot(isTRUE(all.equal(unname(pg$fcont), unname(outer(pg$f1, pg$f2, "+")))))
+
+      if (!is.null(effects_idx$spat)) {
+        stopifnot(length(pg$f) == length(pg$spat))
+
+        for (r in seq_along(pg$spat)) {
+          stopifnot(isTRUE(all.equal(unname(pg$f[[r]]), unname(pg$fcont + pg$spat[r]))))
+        }
+      }
+
     }
-    
-  }
-  
-  return(res)
-  
+
+    res
+  }, verbose, engine_output)
 }

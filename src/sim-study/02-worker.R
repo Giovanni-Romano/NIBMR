@@ -9,6 +9,8 @@
 # --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
 # 0. LIBRARIES / SOURCES / PATHS ####
 # --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
+source("src/sim-study/00-progress.R", local = TRUE)
+
 library(GUD)         # rTPSC (D2), densities, stanmodels (M4)
 library(R2BayesX)    # read.gra (Tanzania graph)
 library(bamlss)      # M1 (ALD median)
@@ -715,7 +717,14 @@ fit_gud <- function(dat, predictor, seed_base, design = NULL) {
 # --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
 # 7. MAIN WORKER ####
 # --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
-run_cell <- function(dgp, predictor, n, replicate, seed_base = 0, include_m5 = TRUE) {
+# verbose controls concise status lines; engine_output restores native engine
+# prints for debugging. show_header=FALSE avoids repeating the pipeline header.
+run_cell <- function(dgp, predictor, n, replicate, seed_base = 0, include_m5 = TRUE,
+                     verbose = TRUE, engine_output = FALSE, show_header = TRUE) {
+  start <- proc.time()[["elapsed"]]
+  if (show_header) run_status(sprintf("%s | %s | n=%d | replicate=%d | %d draws/chain",
+    dgp, predictor, n, replicate,
+    mcmc_schedule(MCMC_TOTAL_ITER, MCMC_BURNIN, MCMC_THIN)$ndraws), verbose)
   sim <- generate_data(dgp, predictor, n, replicate, seed_base = seed_base)
   dat <- sim$dat
   s   <- sim$seed
@@ -736,28 +745,35 @@ run_cell <- function(dgp, predictor, n, replicate, seed_base = 0, include_m5 = T
   
   # Build each design once and pass the same object to fitting and extraction.
   # Keep the existing construction order and each model's own parameterization.
-  designs <- list(m0 = make_design_M0(dat, predictor, splines = TRUE),   # M0 
-                  m1 = NULL, # M1 design is directly created in fit_bamlss_median
-                  m2 = make_design_M0(dat, predictor, splines = FALSE),  # M2
-                  m3 = make_design_M3(dat, predictor),     # M3
-                  m4 = build_gud_design(dat, predictor))   # M4
+  designs <- run_output(list(
+    m0 = make_design_M0(dat, predictor, splines = TRUE),
+    m1 = NULL, # Created by fit_bamlss_median.
+    m2 = make_design_M0(dat, predictor, splines = FALSE),
+    m3 = make_design_M3(dat, predictor),
+    m4 = build_gud_design(dat, predictor)), engine_output)
   
   # Regular 1000-step offsets; M4 uses 4000/5000/6000 and M5 uses 7000.
   # The data seed block reserves space for all of these offsets.
-  fits <- list(m0 = fit_nils_gbi(dat, predictor, "M0", seed = seeds[["m0"]], design = designs$m0),
-               m1 = fit_bamlss_median(dat, predictor, seed = seeds[["m1"]]),
-               m2 = fit_nils_gbi(dat, predictor, "M2", seed = seeds[["m2"]], design = designs$m2),
-               m3 = fit_nils_freq(dat, predictor, seed = seeds[["m3"]], design = designs$m3),
-               m4 = fit_gud(dat, predictor, seed_base = seeds[["m4_TPSC"]], design = designs$m4))
+  fit_model <- function(label, expr) run_stage(label, expr, verbose, engine_output)
+  fits <- list(
+    m0 = fit_model("M0", fit_nils_gbi(dat, predictor, "M0", seed = seeds[["m0"]], design = designs$m0)),
+    m1 = fit_model("M1", fit_bamlss_median(dat, predictor, seed = seeds[["m1"]])),
+    m2 = fit_model("M2", fit_nils_gbi(dat, predictor, "M2", seed = seeds[["m2"]], design = designs$m2)),
+    m3 = fit_model("M3", fit_nils_freq(dat, predictor, seed = seeds[["m3"]], design = designs$m3)),
+    m4 = fit_model("M4 (TPSC, FG, DTP)", fit_gud(dat, predictor,
+      seed_base = seeds[["m4_TPSC"]], design = designs$m4)))
+  if (identical(fits$m4$selected, "FAILURE"))
+    run_status("M4: no winner (LOO selection failed)", verbose)
   if (include_m5) {
     designs$m5 <- designs$m0
-    fits$m5 <- fit_nils_stan(dat, predictor, seed = seeds[["m5"]], design = designs$m5,
-                            reference_fit = fits$m0)
+    fits$m5 <- fit_model("M5 (Stan)", fit_nils_stan(dat, predictor,
+      seed = seeds[["m5"]], design = designs$m5, reference_fit = fits$m0))
   }
   
   designs$m1 <- fits$m1$design  # retain the bamlss design for M1
   fits$m1$design <- NULL          # remove the bamlss design from fits (redundant)
   
+  run_status(sprintf("Model fitting completed in %.1f s", proc.time()[["elapsed"]] - start), verbose)
   list(scenario = sim, designs = designs, fits = fits, settings = settings)
 }
 

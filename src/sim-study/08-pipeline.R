@@ -1,5 +1,7 @@
 # File-based study orchestration. Source from R/, or use the hpc entry scripts.
 # Existing fitting/statistical routines remain the source of every estimate.
+source("src/sim-study/00-progress.R")
+
 study_config <- function() {
   # Each block of 24 rows covers every setting. Start with n=1000 / X3 so a
   # pilot sees the expensive cases early; seeds never depend on task order.
@@ -29,7 +31,7 @@ study_read <- function(path) {
 
 study_sources <- function() {
   files <- c("src/01a-utils.R", "src/01b-mcmc.R", "sim-study/tanzania.gra",
-    file.path("src/sim-study", c("01-dgp.R", "02-worker.R", "02-worker-stan.R",
+    file.path("src/sim-study", c("00-progress.R", "01-dgp.R", "02-worker.R", "02-worker-stan.R",
       "03-extract.R", "06-evaluate.R", "07-test-evaluate.R", "08-pipeline.R",
       "stan/nils-gbi.stan")))
   tools::md5sum(files)
@@ -50,9 +52,12 @@ study_model <- local({
 
 study_worker <- function(settings, model_file = NULL) {
   e <- new.env(parent = globalenv())
-  source("src/sim-study/02-worker.R", local = e)
-  for (file in c("03-extract.R", "06-evaluate.R", "07-test-evaluate.R"))
-    sys.source(file.path("src/sim-study", file), e)
+  # Routine package/graph setup is quiet; startup warnings still reach stderr.
+  run_output(suppressPackageStartupMessages({
+    source("src/sim-study/02-worker.R", local = e)
+    for (file in c("03-extract.R", "06-evaluate.R", "07-test-evaluate.R"))
+      sys.source(file.path("src/sim-study", file), e)
+  }))
   e$MCMC_PROFILE <- "cluster"
   e$MCMC_TOTAL_ITER <- settings$total_iter; e$MCMC_BURNIN <- settings$burnin
   e$MCMC_THIN <- settings$thin
@@ -109,7 +114,9 @@ prepare_study <- function(config, settings, directory) {
   invisible(manifest)
 }
 
-run_study_task <- function(directory, task_id, worker = NULL) {
+# Console flags affect display only; they are not part of saved study settings.
+run_study_task <- function(directory, task_id, worker = NULL,
+                           verbose = TRUE, engine_output = FALSE) {
   directory <- normalizePath(directory)
   manifest <- readRDS(file.path(directory, "manifest.rds"))
   stopifnot(task_id >= 1L, task_id <= nrow(manifest$config), task_id == floor(task_id),
@@ -119,7 +126,7 @@ run_study_task <- function(directory, task_id, worker = NULL) {
   result_file <- file.path(directory, "results", paste0(key, ".rds"))
   completed <- study_read(result_file)
   if (!is.null(completed)) {
-    cat(key, "already complete; skipped.\n")
+    run_status(paste(key, "already complete; skipped."), verbose)
     return(invisible(completed))
   }
   if (is.null(worker)) worker <- study_worker(settings, file.path(directory, "stan-model.rds"))
@@ -131,38 +138,46 @@ run_study_task <- function(directory, task_id, worker = NULL) {
     timing[label] <<- proc.time()[["elapsed"]] - start
     value
   }
-  cat("Running", key, "with", worker$MCMC_NDRAWS, "draws/chain.\n")
+  run_status(sprintf("%s | %s | n=%d | replicate=%d | %d draws/chain",
+    row$dgp, row$predictor, row$n, row$replicate, worker$MCMC_NDRAWS), verbose)
+  report <- function(label, expr) run_stage(label, expr, verbose, engine_output)
   tryCatch({
     checkpoint <- file.path(directory, "fits", paste0(key, ".rds"))
-    s <- if (file.exists(checkpoint)) timed("load_fit", study_read(checkpoint)) else NULL
+    s <- if (file.exists(checkpoint)) timed("load_fit", report("Loading saved fits", study_read(checkpoint))) else NULL
     if (is.null(s)) {
       s <- timed("fitting", worker$run_cell(row$dgp, row$predictor, row$n,
-                                          row$replicate, seed_base = settings$seed_base))
+                                          row$replicate, seed_base = settings$seed_base, verbose = verbose,
+                                          engine_output = engine_output, show_header = FALSE))
       s$settings$study <- settings
-      timed("save_fit", study_save(s, checkpoint))
+      timed("save_fit", report("Saving fit checkpoint", study_save(s, checkpoint)))
     }
     extraction_file <- file.path(directory, "extracted", paste0(key, ".rds"))
-    fitted <- if (file.exists(extraction_file)) timed("load_extraction", study_read(extraction_file)) else NULL
+    fitted <- if (file.exists(extraction_file)) timed("load_extraction", report("Loading saved extraction", study_read(extraction_file))) else NULL
     if (is.null(fitted)) {
       fitted <- timed("extraction", worker$results_on_train(s, xval_N = settings$grid_N,
         probs = settings$probs, B_M3 = settings$B_M3,
-        boot_chunk_size = settings$grid_chunk_size, grid_chunk_size = settings$grid_chunk_size))
-      if (settings$save_extracted) timed("save_extraction", study_save(fitted, extraction_file))
+        boot_chunk_size = settings$grid_chunk_size, grid_chunk_size = settings$grid_chunk_size,
+        verbose = verbose, engine_output = engine_output))
+      if (settings$save_extracted) timed("save_extraction", report("Saving extraction", study_save(fitted, extraction_file)))
     }
-    structural <- timed("structural", worker$evaluate_replicate(s, fitted, grid_N = settings$grid_N))
+    structural <- timed("structural", report("Evaluating structural effects",
+      worker$evaluate_replicate(s, fitted, grid_N = settings$grid_N)))
     tests <- readRDS(file.path(directory, "test-sets.rds"))
-    unseen <- timed("test", worker$evaluate_test_sample(s, tests[[row$dgp]],
-                                                       chunk_size = settings$kde_chunk_size))
+    unseen <- timed("test", report("Evaluating unseen responses",
+      worker$evaluate_test_sample(s, tests[[row$dgp]], chunk_size = settings$kde_chunk_size)))
     timing["total"] <- proc.time()[["elapsed"]] - started
     out <- list(scenario = s$scenario[c("dgp", "predictor", "n", "replicate", "seed")],
       study_settings = settings, source_md5 = manifest$source_md5, status = "OK",
       structural = structural, test = unseen, timing = timing,
       execution = list(job = Sys.getenv("SLURM_JOB_ID"), task = task_id,
                        host = Sys.info()[["nodename"]], session = sessionInfo()))
+    stage <- "save_result"
     study_save(out, result_file)
-    cat("Completed", key, "in", round(timing[["total"]], 1), "seconds (before final result save).\n")
+    run_status(sprintf("Results saved: %s; elapsed %.1f s", key,
+                       proc.time()[["elapsed"]] - started), verbose)
     invisible(out)
   }, error = function(error) {
+    run_status(paste0("FAILED at ", stage, ": ", conditionMessage(error)), verbose)
     study_save(list(scenario = row, stage = stage, message = conditionMessage(error),
       timing = timing, time = Sys.time()), file.path(directory, "failures", paste0(key, ".rds")))
     stop(error)
