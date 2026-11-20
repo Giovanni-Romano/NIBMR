@@ -197,20 +197,55 @@ updated code. Keep the existing pilot directory and its results intact.
 For each key such as `n1000_D3_X3_r015`:
 
 - `fits/KEY.rds`: full `run_cell()` output, including beta/tau, priors,
-  calibration, settings and the native objects needed for re-evaluation.
+  calibration, settings and native objects. With the default `keep_draws=FALSE`,
+  this is a TEMPORARY checkpoint, removed only after the compact result is saved.
 - `extracted/KEY.rds`: point estimates and intervals, if `save_extracted=TRUE`.
 - `results/KEY.rds`: structural errors/coverage/width, test scores, timings
-  and execution information. Its presence marks a completed run.
+  and execution information, plus `model_summaries`, original training data/truth
+  and actual fit settings/seeds. Its presence marks a completed run.
 - `failures/KEY.rds`: latest R error and stage, if an attempt failed. A later
   successful result takes precedence; the earlier failure remains for inspection.
 
-A completed run is skipped. A fit checkpoint avoids refitting after an
+A completed run is skipped. The skip also finishes any interrupted checkpoint
+cleanup. A fit checkpoint avoids refitting after an
 extraction failure; a saved extraction avoids repeating the bootstrap after a
 later evaluation failure. Identical settings/code are required. Fit/evaluation
 objects can be large, especially for X3 and unthinned native Stan output.
-Measure disk use during the pilot (`du -sh "$STUDY"/*`); `save_extracted=FALSE`
-omits that extra copy but preserves fits and evaluation metrics. Decide before
-preparation. Never delete checkpoint files needed for a planned resumption.
+Measure disk use during the pilot (`du -sh "$STUDY"/*`). `keep_draws=TRUE` retains
+full fit checkpoints for exploratory work; the production default is FALSE.
+`save_extracted=FALSE` omits the separate effect-estimate/interval archive;
+evaluation metrics and parameter summaries remain. Failed/incomplete runs always
+retain their recovery checkpoints. A corrupt result after draw cleanup requires
+refitting. Never manually delete checkpoints needed for a planned resumption.
+
+`model_summaries` contains one entry per model. Posterior parameter tables have
+empirical mean/SD, ten quantiles (`parameter_probs` in settings), bulk/tail ESS,
+rank-normalized split/folded R-hat and MCSE of the mean. Chain count and the
+single-chain R-hat limitation are explicit: splitting one chain does not compare
+independently initialized chains. Diagnostics use the retained posterior draws;
+native Stan sampler statistics use its available post-warmup iterations.
+`stored_thin` records their thinning: M4 currently retains thinned sampler
+statistics, so its divergence/treedepth counts cover those stored transitions;
+M5 retains every transition for these diagnostics (`stored_thin=1`).
+M0/M2 acceptance rates include burn-in and are labelled accordingly; M1 rates
+use its retained iteration indicators. Stan diagnostics give acceptance statistic,
+divergences, treedepth-limit hits, mean leapfrogs and E-BFMI per chain.
+
+M0/M2/M5 tables include both `tau` and `tau2`. `mean_exists` and `sd_exists` flag
+known moment conditions; NA means not established for that parameter. Empirical
+mean/SD are still recorded, but with bounded NIL loss some moments are infinite:
+IG shape 1 has no finite variance-parameter mean, and shape 2 has no finite SD.
+MCSE of the mean is NA when its required finite variance is known not to exist.
+Quantiles do not require finite moments. No priors are changed by summarization.
+M1 retains native coefficient/smoothing-variance parameters and its transformed
+sigma/ALD scale. M4 retains parameter summaries and Stan diagnostics for ALL three
+candidates, together with ELPDs and selection. M3 retains point estimates and
+optimizer diagnostics; its bootstrap intervals are not posterior summaries.
+
+Draws remain in memory through joint-effect intervals and predictive scoring;
+these operations cannot be reconstructed from marginal summaries alone.
+Completed production archives contain neither raw draws nor native fit objects.
+Changing grids, interval probabilities or scoring later may require refitting.
 
 `summary/` contains:
 
@@ -249,6 +284,8 @@ From R/, using the project R library:
 Rscript --vanilla src/sim-study/tests/test-hpc-pipeline.R
 python3 src/sim-study/tests/test-hpc-submit.py
 Rscript --vanilla src/sim-study/tests/test-hpc-engines.R
+Rscript --vanilla src/sim-study/tests/test-compact-storage.R
+Rscript --vanilla src/sim-study/tests/test-compact-engines.R
 ```
 
 The real-engine check uses explicit short test settings in a temporary directory.

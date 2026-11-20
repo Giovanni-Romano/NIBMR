@@ -11,5 +11,8 @@ study_settings <- list(
   B_M3 = 100L, grid_N = 50L, probs = c(.025, .975),
   grid_chunk_size = 512L, kde_chunk_size = 256L,
   seed_base = 0, test_replicate = 101L, n_test = 500L,
-  save_extracted = TRUE # Fits and evaluation metrics are always saved.
+  # Ten posterior quantiles, including median, 95% limits and upper tail.
+  parameter_probs = c(.01, .025, .05, .10, .25, .50, .75, .90, .95, .975, .99),
+  keep_draws = FALSE, # Keep full fits only until the compact result is saved.
+  save_extracted = TRUE # Effect estimates/intervals; compact results are always saved.
 )

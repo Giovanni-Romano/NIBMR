@@ -10,6 +10,7 @@
 # 0. LIBRARIES / SOURCES / PATHS ####
 # --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
 source("src/sim-study/00-progress.R", local = TRUE)
+source("src/sim-study/00-summaries.R", local = TRUE)
 
 library(GUD)         # rTPSC (D2), densities, stanmodels (M4)
 library(R2BayesX)    # read.gra (Tanzania graph)
@@ -661,7 +662,9 @@ modal_regression_loo <- function(X, N, y, model, seed, ...) {
   distribution_names <- switch(model, TPSC = c("w", "sigma", "delta"),
     FG = c("w", "sigma1", "sigma2"), DTP = c("sigma1", "sigma2", "delta1", "delta2"))
   distribution_draws <- unclass(samples[, distribution_names, drop = FALSE])
-  list(draws = draws, distribution_draws = distribution_draws, stanfit = stanfit)
+  compact <- compact_gud_candidate(draws, distribution_draws, stanfit, X, POSTERIOR_PROBS)
+  list(draws = draws, distribution_draws = distribution_draws, stanfit = stanfit,
+       compact = compact)
 }
 
 # Retains coefficient draws for all three GUD members and compact distribution
@@ -693,6 +696,7 @@ fit_gud <- function(dat, predictor, seed_base, design = NULL) {
   })
   names(res) <- mods
   elpd <- setNames(vapply(res, function(z) z$elpd, numeric(1)), mods)
+  candidates <- lapply(res, function(z) z$fit$compact)
   
   all_draws <- lapply(res, 
                       function(z) {
@@ -705,7 +709,8 @@ fit_gud <- function(dat, predictor, seed_base, design = NULL) {
                         out})
   valid <- is.finite(elpd)
   if (!any(valid)) return(list(draws = NULL, losing_draws = all_draws,
-                               selected = "FAILURE", elpd = elpd, distribution_draws = NULL))
+                               selected = "FAILURE", elpd = elpd, distribution_draws = NULL,
+                               candidates = candidates))
   best <- mods[valid][which.max(elpd[valid])]
   draws <- all_draws[[best]]
   losing_draws <- all_draws[names(all_draws) != best]
@@ -714,6 +719,7 @@ fit_gud <- function(dat, predictor, seed_base, design = NULL) {
        losing_draws = losing_draws,
        selected = best,
        elpd = elpd,
+       candidates = candidates,
        distribution_draws = res[[best]]$fit$distribution_draws)
 }
 
