@@ -1,6 +1,7 @@
 # File-based study orchestration. Source from R/, or use the hpc entry scripts.
 # Existing fitting/statistical routines remain the source of every estimate.
 source("src/sim-study/00-progress.R")
+source("src/sim-study/00-summaries.R")
 
 study_config <- function() {
   # Each block of 24 rows covers every setting. Start with n=1000 / X3 so a
@@ -31,7 +32,7 @@ study_read <- function(path) {
 
 study_sources <- function() {
   files <- c("src/01a-utils.R", "src/01b-mcmc.R", "sim-study/tanzania.gra",
-    file.path("src/sim-study", c("00-progress.R", "01-dgp.R", "02-worker.R", "02-worker-stan.R",
+    file.path("src/sim-study", c("00-progress.R", "00-summaries.R", "01-dgp.R", "02-worker.R", "02-worker-stan.R",
       "03-extract.R", "06-evaluate.R", "07-test-evaluate.R", "08-pipeline.R",
       "stan/nils-gbi.stan")))
   tools::md5sum(files)
@@ -68,6 +69,7 @@ study_worker <- function(settings, model_file = NULL) {
   for (name in unique(fitting))
     e[[name]] <- settings[[name]]
   e$M5_CORES <- 1L
+  if (!is.null(settings$parameter_probs)) e$POSTERIOR_PROBS <- settings$parameter_probs
   options(mc.cores = 1L)
   if (!is.null(model_file)) {
     # The compiled model is built once on the cluster, not once per replicate.
@@ -123,9 +125,13 @@ run_study_task <- function(directory, task_id, worker = NULL,
             identical(study_sources(), manifest$source_md5))
   settings <- manifest$settings; row <- manifest$config[task_id, ]
   key <- study_key(row)
+  checkpoint <- file.path(directory, "fits", paste0(key, ".rds"))
   result_file <- file.path(directory, "results", paste0(key, ".rds"))
   completed <- study_read(result_file)
   if (!is.null(completed)) {
+    # Recover even if a process stopped after saving its result but before
+    # removing the temporary fit. Older results without summaries are untouched.
+    if (isFALSE(settings$keep_draws) && !is.null(completed$model_summaries)) unlink(checkpoint)
     run_status(paste(key, "already complete; skipped."), verbose)
     return(invisible(completed))
   }
@@ -142,7 +148,6 @@ run_study_task <- function(directory, task_id, worker = NULL,
     row$dgp, row$predictor, row$n, row$replicate, worker$MCMC_NDRAWS), verbose)
   report <- function(label, expr) run_stage(label, expr, verbose, engine_output)
   tryCatch({
-    checkpoint <- file.path(directory, "fits", paste0(key, ".rds"))
     s <- if (file.exists(checkpoint)) timed("load_fit", report("Loading saved fits", study_read(checkpoint))) else NULL
     if (is.null(s)) {
       s <- timed("fitting", worker$run_cell(row$dgp, row$predictor, row$n,
@@ -165,14 +170,26 @@ run_study_task <- function(directory, task_id, worker = NULL,
     tests <- readRDS(file.path(directory, "test-sets.rds"))
     unseen <- timed("test", report("Evaluating unseen responses",
       worker$evaluate_test_sample(s, tests[[row$dgp]], chunk_size = settings$kde_chunk_size)))
+    probs <- if (is.null(settings$parameter_probs)) POSTERIOR_PROBS else settings$parameter_probs
+    summaries <- timed("summaries", report("Summarizing parameters and MCMC diagnostics",
+      compact_models(s, probs)))
     timing["total"] <- proc.time()[["elapsed"]] - started
     out <- list(scenario = s$scenario[c("dgp", "predictor", "n", "replicate", "seed")],
       study_settings = settings, source_md5 = manifest$source_md5, status = "OK",
+      model_summaries = summaries, fit_settings = s$settings,
+      training_data = s$scenario[c("dat", "f0", "eps", "gamma", "region")],
       structural = structural, test = unseen, timing = timing,
       execution = list(job = Sys.getenv("SLURM_JOB_ID"), task = task_id,
                        host = Sys.info()[["nodename"]], session = sessionInfo()))
     stage <- "save_result"
     study_save(out, result_file)
+    # Draws are needed through interval construction AND predictive scoring.
+    # Delete only after the compact result is atomically saved. Failed runs
+    # keep their checkpoints; completed-run skips repeat any interrupted cleanup.
+    if (isFALSE(settings$keep_draws)) {
+      unlink(checkpoint)
+      if (file.exists(checkpoint)) warning("Result saved, but fit checkpoint could not be removed: ", checkpoint)
+    }
     run_status(sprintf("Results saved: %s; elapsed %.1f s", key,
                        proc.time()[["elapsed"]] - started), verbose)
     invisible(out)
