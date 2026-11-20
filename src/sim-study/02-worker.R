@@ -156,9 +156,13 @@ est_s1_s2 <- function(resid) {
 
 # Shared recipe for the median start and NIL loss parameters. Call it afresh
 # for each model or bootstrap resample, using that fit's own X and y.
+# Use the full design (including regional effects) with the FN solver, replacing
+# the default BR solver after nonuniqueness warnings in the X3 bootstrap.
+# Both solve the same median objective, but can choose different solutions:
+# this can change starts, s1/s2, k, and downstream calibration and fitted results.
 # Keep coefficient names here; callers retain their existing naming convention.
 nils_setup <- function(X, y) {
-  med <- quantreg::rq.fit(X, y, tau = 0.5)
+  med <- quantreg::rq.fit(X, y, tau = 0.5, method = "fn")
   s12 <- est_s1_s2(as.vector(y - X %*% med$coefficients))
   kn <- k_n(nrow(X))
   list(start = med$coefficients, s = s12,

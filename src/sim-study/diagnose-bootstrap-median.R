@@ -19,6 +19,8 @@
 # Truth is used only for evaluation, never for initialization or optimization.
 # The BR/FN comparison changes BOTH the start and loss scales. The zero-region
 # comparison changes ONLY the start. Neither establishes a global optimum.
+# Production nils_setup() now uses FN. This historical diagnostic deliberately
+# retains both solvers, including the original BR-based resampling stream.
 
 # Same optimizer recipe for all diagnostic fits. Keeping it here ensures that
 # the zero-region comparison changes the start, not the loss or optimizer.
@@ -139,8 +141,8 @@ diagnose_bootstrap_median <- function(s, worker, B = 10L, refit = FALSE,
          objective = sum(abs(residuals)), warnings = messages)
   }
 
-  # This is the same optimization recipe as boot_CI(), using the method chosen
-  # on the full dataset. Only the preliminary median solver differs.
+  # Same optimization recipe as boot_CI(), using the full dataset's selected
+  # method. Both historical BR setup and current production FN setup are tested.
   m3_fit <- function(X, y, setup)
     diagnostic_m3_fit(X, y, setup, method, settings, worker)
 
@@ -148,7 +150,8 @@ diagnose_bootstrap_median <- function(s, worker, B = 10L, refit = FALSE,
   cases <- vector("list", B)
   summary <- vector("list", B)
   # One seed for the whole procedure, as in boot_CI(). The sampling statements
-  # below are copied from that procedure, including within-region resampling.
+  # below match that procedure, including within-region resampling. For SANN,
+  # the stream follows historical BR fits, rather than the new FN production fits.
   set.seed(seed)
   for (b in seq_len(B)) {
     idx <- integer(n)

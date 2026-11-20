@@ -27,6 +27,14 @@ cover every setting; seeds depend on the scenario, not its row/order.
 - Original priors, loss policy and calibration. Optimizer warnings are muted;
   optimizer diagnostics and native sampler warnings remain available.
 
+The shared preliminary median regression now uses `quantreg::rq.fit(method="fn")`
+on the full design, including regional effects. It replaces the default BR
+solver following X3 bootstrap nonuniqueness warnings. This supplies starting
+coefficients and residual scales `s1/s2` for M0/M2/M3 and the M3 bootstrap;
+M5 shares M0's setup. The median objective is unchanged, but a different median
+solution can change `s1/s2`, loss parameters `k`, calibrated `w`, and final fits.
+Keep earlier results intact and prepare a new study directory after this change.
+
 At 50 simultaneous tasks, 2,400/50 = 48 is the equal-duration batch equivalent.
 Slurm fills a free slot immediately; it does not wait for 50 tasks to finish.
 The reported Mac benchmark (3.48 minutes) was D3/X2/n=250, total=25,000,
