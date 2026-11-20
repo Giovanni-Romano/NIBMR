@@ -8,9 +8,33 @@
 # relative_loss_gap is (FN - BR) / max(1, BR absolute-error loss).
 # Relative differences divide by the larger magnitude of the two values;
 # scales/k columns report the largest difference across their two components.
-# RMSE columns compare the two fitted predictors, not either predictor to truth.
+# fitted_rmse/original_fitted_rmse compare the two fitted predictors.
+# truth_rmse_br/fn compare final M3 predictors to the known full signal f0$f,
+# on the ORIGINAL training observations, including intercept and region effects.
+# Truth is used only for evaluation, never for initialization or optimization.
 # Final M3 comparisons change BOTH the start and loss scales; they do not
 # identify their separate contributions or establish a global optimum.
+
+# Also works on a previously saved refit diagnostic: no models are refitted.
+add_m3_truth_rmse <- function(diagnostic, scenario) {
+  if (is.null(diagnostic$m3_comparison)) return(diagnostic)
+  truth <- scenario$f0$f
+  stopifnot(length(truth) == nrow(scenario$dat), all(is.finite(truth)))
+  rmse <- t(vapply(diagnostic$cases, function(case) {
+    predicted_br <- drop(case$original_X %*% case$baseline$par)
+    predicted_fn <- drop(case$original_X %*% case$alternative$par)
+    c(br = sqrt(mean((predicted_br - truth)^2)),
+      fn = sqrt(mean((predicted_fn - truth)^2)))
+  }, numeric(2)))
+  diagnostic$m3_comparison$truth_rmse_br <- rmse[, "br"]
+  diagnostic$m3_comparison$truth_rmse_fn <- rmse[, "fn"]
+  # Treat differences at numerical precision as ties. These labels describe
+  # this bootstrap experiment; they are not a truth-based model-selection rule.
+  tied <- abs(rmse[, "br"] - rmse[, "fn"]) <= 1e-8 * pmax(1, rmse[, "br"], rmse[, "fn"])
+  diagnostic$m3_comparison$better_truth_rmse <- ifelse(tied, "tie",
+    ifelse(rmse[, "br"] < rmse[, "fn"], "br", "fn"))
+  diagnostic
+}
 
 diagnose_bootstrap_median <- function(s, worker, B = 10L, refit = FALSE,
                                       seed = s$scenario$seed) {
@@ -134,13 +158,14 @@ diagnose_bootstrap_median <- function(s, worker, B = 10L, refit = FALSE,
     comparison <- do.call(rbind, comparison)
   }
 
-  list(scenario = s$scenario[c("dgp", "predictor", "n", "replicate", "seed")],
+  out <- list(scenario = s$scenario[c("dgp", "predictor", "n", "replicate", "seed")],
        seed = seed, method = method, B = B, grid = grid,
        settings = list(D_SPLINE = worker$D_SPLINE, control = worker$m3_optim_control(method),
          retry = worker$OPTIM_RETRY, ntry = worker$OPTIM_NTRY_M3,
          retry_factor = worker$OPTIM_RETRY_FACTOR),
        summary = do.call(rbind, summary), m3_comparison = comparison,
        cases = cases, session = sessionInfo())
+  add_m3_truth_rmse(out, s$scenario)
 }
 
 if (sys.nframe() == 0L) {
@@ -161,7 +186,11 @@ if (sys.nframe() == 0L) {
   print(out$summary[c("bootstrap", "br_warning", "fn_warning", "relative_loss_gap",
                       "fitted_rmse", "original_fitted_rmse",
                       "scales_relative_difference", "k_relative_difference")], row.names = FALSE)
-  if (refit) print(out$m3_comparison, row.names = FALSE)
+  if (refit) {
+    print(out$m3_comparison, row.names = FALSE)
+    cat("Bootstrap fits with lower RMSE against truth:\n")
+    print(table(out$m3_comparison$better_truth_rmse))
+  }
   reports <- file.path(directory, "diagnostics")
   dir.create(reports, showWarnings = FALSE)
   output <- file.path(reports, paste0("bootstrap-median-", key, if (refit) "-refit" else "", ".rds"))
