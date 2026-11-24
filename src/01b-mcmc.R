@@ -7,24 +7,25 @@ calibrate_nils <- function(X, y, beta0, k, c, freq = rep(1, nrow(X)),
                            optim_warn = FALSE, optim_retry = TRUE, optim_retry_factor = 5,
                            cv_optim_control = list(maxit = 100L, reltol = sqrt(.Machine$double.eps)),
                            optim_ntry_cv = 5L, cv_analytic_gradient = TRUE) {
+  
   n <- nrow(X); P <- ncol(X); loss_fun <- loss_asymm
   w_num <- 1 / 2
   if (!is.null(seed)) {set.seed(seed)}
-
+  
   start_Kfold <- Sys.time()
   K <- K_fold
   if (verbose > 0) cat("Start ", K, "-fold CV. ", sep = "")
   fold_id <- sample(rep(1:K, length.out = n))
-
+  
   cv_folds <- lapply(seq_len(K), function(f) {
     test_idx  <- which(fold_id == f)
     train_idx <- setdiff(seq_len(n), test_idx)
-
+    
     # Reuse the same training rows/weights in the objective and its gradient.
     X_train <- X[train_idx, , drop = FALSE]
     y_train <- y[train_idx]
     freq_train <- freq[train_idx]
-
+    
     est <- optim_with_diagnostics(
       par = beta0,
       fn = function(b) {
@@ -48,32 +49,39 @@ calibrate_nils <- function(X, y, beta0, k, c, freq = rep(1, nrow(X)),
     list(fold = f, n_train = length(train_idx), n_test = length(test_idx),
          heldout_loss = heldout_loss, optimization = est)
   })
+  
   # Complete all fold diagnostics before reporting a numerical failure.
   # The error condition retains them for tryCatch() / batch-run failure logs.
-  failed_folds <- which(!vapply(cv_folds, function(f)
-    f$optimization$usable && is.finite(f$heldout_loss), logical(1)))
+  failed_folds <- which(!vapply(cv_folds, 
+                                function(f) f$optimization$usable && is.finite(f$heldout_loss), 
+                                logical(1)))
   if (length(failed_folds)) {
     stop(structure(list(message = paste0("CV fold(s) ", paste(failed_folds, collapse = ", "),
-      " have no usable fit/held-out loss after optimization attempts."),
-      call = NULL, fold_id = fold_id, folds = cv_folds),
-      class = c("mode_optim_error", "error", "condition")))
+                                         " have no usable fit/held-out loss after optimization attempts."),
+                        call = NULL, fold_id = fold_id, folds = cv_folds),
+                   class = c("mode_optim_error", "error", "condition")))
   }
+  
   CV <- vapply(cv_folds, function(f) f$heldout_loss, numeric(1))
   mean_cv <- sum(CV) / sum(freq)
+  
   if (!is.finite(mean_cv) || mean_cv <= 0) {
     stop(structure(list(message = "CV mean loss must be finite and positive to calibrate w.",
-      call = NULL, fold_id = fold_id, folds = cv_folds),
-      class = c("mode_optim_error", "error", "condition")))
+                        call = NULL, fold_id = fold_id, folds = cv_folds),
+                   class = c("mode_optim_error", "error", "condition")))
   }
+  
   w <- w_num / mean_cv
+  
   end_Kfold <- Sys.time()
   diff_time_kfold = round(difftime(end_Kfold, start_Kfold, units = "mins"), 2)
+  
   if (verbose > 0) cat("End CV. \t", "Exec. time: ", diff_time_kfold, " mins \n\n", sep = "")
-
+  
   list(w = w, numerator = w_num, mean_cv = mean_cv, fold_id = fold_id, folds = cv_folds,
        optim_settings = list(warn = optim_warn, retry = optim_retry,
-         retry_factor = optim_retry_factor, ntry = optim_ntry_cv,
-         control = cv_optim_control, analytic_gradient = cv_analytic_gradient))
+                             retry_factor = optim_retry_factor, ntry = optim_ntry_cv,
+                             control = cv_optim_control, analytic_gradient = cv_analytic_gradient))
 }
 
 # MCMC SAMPLER (MAIN) ----
@@ -236,8 +244,8 @@ MCMC_IWLS <- function(niter,
   # number of continuous covariates
   p <- if (is.null(X_cont)) 0L else ncol(X_cont)
   p_nonlin <- if (is.null(Z_cont)) 0L else p
-
-
+  
+  
   # number of spatial covariates
   if (!is.null(Z_spat)){
     s = ncol(Z_spat)
@@ -291,10 +299,10 @@ MCMC_IWLS <- function(niter,
   # DR-basis + s spatial coefficients (all have Gaussian priors),
   # so w_num = (1 + q + p + sum(d) + s) / 2 = P / 2.
   calibration <- calibrate_nils(X, y, beta0, k, c, freq = freq,
-    link = link, link_prime = link_prime, K_fold = K_fold, seed = seed, verbose = verbose,
-    optim_warn = optim_warn, optim_retry = optim_retry, optim_retry_factor = optim_retry_factor,
-    cv_optim_control = cv_optim_control, optim_ntry_cv = optim_ntry_cv,
-    cv_analytic_gradient = cv_analytic_gradient)
+                                link = link, link_prime = link_prime, K_fold = K_fold, seed = seed, verbose = verbose,
+                                optim_warn = optim_warn, optim_retry = optim_retry, optim_retry_factor = optim_retry_factor,
+                                cv_optim_control = cv_optim_control, optim_ntry_cv = optim_ntry_cv,
+                                cv_analytic_gradient = cv_analytic_gradient)
   w <- calibration$w
   
   
@@ -338,7 +346,7 @@ MCMC_IWLS <- function(niter,
     if (p_nonlin > 0) q + p + rep(seq_len(p), d) else integer(0),
     if (s > 0) rep(q + p + p_nonlin + 1, s) else integer(0)
   )
-
+  
   # Initialize nonlinear blocks after their coefficient-to-variance mapping exists.
   nonlinear_tau_idx <- q + p + seq_len(p_nonlin)
   nonlinear_beta_idx <- 1L + which(tau_idx %in% nonlinear_tau_idx)
