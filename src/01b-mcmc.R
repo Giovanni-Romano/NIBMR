@@ -8,7 +8,7 @@ calibrate_nils <- function(X, y, beta0, k, c, freq = rep(1, nrow(X)),
                            cv_optim_control = list(maxit = 100L, reltol = sqrt(.Machine$double.eps)),
                            optim_ntry_cv = 5L, cv_analytic_gradient = TRUE) {
   n <- nrow(X); P <- ncol(X); loss_fun <- loss_asymm
-  w_num <- P / 2
+  w_num <- 1 / 2
   if (!is.null(seed)) {set.seed(seed)}
 
   start_Kfold <- Sys.time()
