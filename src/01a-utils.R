@@ -228,32 +228,6 @@ loss_asymm = function(eps, k, c, g = 1){
   -expm1(-a)
 }
 
-#' DEPRECATED. Population (whole-vector) asymmetric nested interval loss.
-#'
-#' Sums loss_asymm over all residuals r_i = y_i - link(X_i %*% beta). It was
-#' used only by the (now outdated) simulation-study scripts; the sampler itself
-#' works with the vectorised loss_asymm directly. Kept for reference.
-#'
-#' @param beta Regression-coefficient vector at which to evaluate the loss.
-#' @param y Numeric response vector.
-#' @param X Numeric design matrix (a column of 1s plus covariates).
-#' @param k Numeric vector of length 2 with the asymmetric loss-shape parameter
-#'   (k_ni on the negative and positive side).
-#' @param c Positive scalar smoothness parameter c_n of the loss.
-#' @param g Finite positive integer scalar controlling the exponent h = 2*g;
-#'   default 1. Integer-valued numeric inputs are accepted. Invalid values
-#'   raise an error, using the same restriction as loss_asymm().
-#' @param link Link function mapping the linear predictor to mu (default identity).
-#'
-#' @return Scalar: the summed empirical loss.
-
-loss_asymm_pop = function(beta, y, X, k, c, g = 1, link = function(x) x){
-  eps = y - link(X%*%beta)
-  # Same sum of 1 - exp(c^(1/h) - ((k*eps)^h + c)^(1/h)), using the
-  # stable pointwise implementation and its shared positive-integer g check.
-  sum(loss_asymm(eps, k = k, c = c, g = g))
-}
-
 
 ## Derivatives ----
 #' Score (gradient of the log-likelihood) for a block of regression coefficients.
