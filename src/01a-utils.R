@@ -1497,4 +1497,3 @@ plot_effect_spat<-function(Xspat, beta_est, Trafo, xlim=c(-0.2,1.2), ylim=c(-0.2
           xlab="Easting",ylab="Northing",xlim=xlim,ylim=ylim)
   points(x1,x2,pch=16,cex=cex)
 }
-}
