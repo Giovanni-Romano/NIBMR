@@ -36,27 +36,36 @@ require(mgcv)
 ## Optimization diagnostics ----
 #' Run optim(), retaining up to ntry total attempts (including the first).
 #'
-#' A usable result has finite reported and re-evaluated scalar objectives and
-#' a finite coefficient vector of the expected length. This is a numerical requirement, not a
-#' claim about convergence or the global minimum. Finite nonconverged results
-#' remain eligible: the lowest objective across usable attempts is selected.
+#' A usable result has finite objective and a finite coefficient vector of the 
+#' expected length (just a numerical requirement, not a claim about convergence 
+#' to the global minimum). 
+#' Finite nonconverged results remain eligible: the lowest objective across 
+#' usable attempts is selected.
 #'
 #' On an error, unusable result or nonzero convergence code, retry until ntry
-#' total attempts have run. Multiply the preceding maxit by retry_factor for
-#' each retry. Start from the lowest-objective usable result so far, otherwise
-#' from the original par. Other controls are unchanged. Stop early on a usable
-#' zero-code result. Set ntry=1 or retry=FALSE for a single attempt.
+#' total attempts have run. 
+#' Multiply the preceding maxit by retry_factor for each retry. Start from the 
+#' lowest-objective usable result so far, otherwise from the original par. 
+#' Other controls are unchanged. 
+#' Stop early on a usable zero-code result.
+#' 
+#' Set ntry=1 or retry=FALSE for a single attempt.
+#' 
 #' SANN's zero code only denotes completion of its evaluation budget; it is
 #' not evidence of convergence and does not by itself trigger a retry.
 #'
 #' warn controls both optimizer warnings and termination/retry warnings.
+#' 
 #' Diagnostics are retained even when warn=FALSE. No RNG seed is reset here.
+#' 
 #' If no attempt is usable, return usable=FALSE for the caller to handle.
 #' Attempts include their start, controls, complete optim result, warnings and
 #' error message. Existing optim fields refer to the selected attempt.
 optim_with_diagnostics <- function(par, fn, gr = NULL, method,
                                    control, retry = TRUE, retry_factor = 5,
                                    warn = FALSE, label = method, ntry = 5L) {
+  
+  # Check inputs
   if (!is.logical(retry) || length(retry) != 1L || is.na(retry) ||
       !is.logical(warn) || length(warn) != 1L || is.na(warn))
     stop("retry and warn must be TRUE or FALSE.")
@@ -70,42 +79,46 @@ optim_with_diagnostics <- function(par, fn, gr = NULL, method,
       control$maxit != floor(control$maxit) ||
       control$maxit > .Machine$integer.max)
     stop("control$maxit must be a positive integer within R's integer range.")
-
+  
+  # Function to run a single attempt of optim() and capture warnings/errors
   run_attempt <- function(start, settings) {
     messages <- character(0)
     error <- NULL
     result <- NULL
     objective_at_par <- NA_real_
+    
     tryCatch(withCallingHandlers({
       result <- stats::optim(start, fn = fn, gr = gr, method = method, control = settings)
-      # SANN can replace a nonfinite objective with a large finite sentinel.
-      # Check the actual deterministic objective once at the returned point.
-      if (is.numeric(result$par) && !is.complex(result$par) &&
-          length(result$par) == length(par) && all(is.finite(result$par)))
-        objective_at_par <- fn(result$par)
+      # SANN can replace a nonfinite objective with 1e35. Check the actual 
+      # objective at the returned point.
+      objective_at_par <- fn(result$par)
     },
-      warning = function(w) {
-        messages <<- c(messages, conditionMessage(w))
-        invokeRestart("muffleWarning")
-      }), error = function(e) {
-        error <<- conditionMessage(e)
-        NULL
-      })
+    warning = function(w) {
+      messages <<- c(messages, conditionMessage(w))
+      invokeRestart("muffleWarning") # Stop R from printing it immediately.
+    }), error = function(e) {
+      error <<- conditionMessage(e)
+      NULL
+    })
+    
     usable <- !is.null(result) && is.numeric(result$par) && !is.complex(result$par) &&
       length(result$par) == length(par) && all(is.finite(result$par)) &&
       is.numeric(result$value) && !is.complex(result$value) &&
       length(result$value) == 1L && is.finite(result$value) && is.null(error) &&
       is.numeric(objective_at_par) && !is.complex(objective_at_par) &&
       length(objective_at_par) == 1L && is.finite(objective_at_par)
+    
     list(start = start, control = settings, result = result,
          objective_at_par = objective_at_par,
          usable = usable, warnings = messages, error = error)
   }
+  
   attempt_limit <- if (retry) as.integer(ntry) else 1L
   attempts <- list()
   next_start <- par
   next_control <- control
   best_value <- Inf
+  
   for (i in seq_len(attempt_limit)) {
     attempt <- run_attempt(next_start, next_control)
     attempts[[i]] <- attempt
@@ -113,26 +126,38 @@ optim_with_diagnostics <- function(par, fn, gr = NULL, method,
       best_value <- attempt$result$value
       next_start <- attempt$result$par
     }
+    # If the attempt is usable and converged (convergence code 0), break here (no more attempts)
     if (attempt$usable && isTRUE(attempt$result$convergence == 0L)) break
-    next_control$maxit <- as.integer(min(.Machine$integer.max,
-      ceiling(next_control$maxit * retry_factor)))
+    
+    next_control$maxit <- as.integer(min(.Machine$integer.max, ceiling(next_control$maxit * retry_factor)))
   }
+  
   usable <- vapply(attempts, function(a) a$usable, logical(1))
   values <- vapply(attempts, function(a) if (a$usable) a$result$value else Inf, numeric(1))
   selected <- if (any(usable)) which.min(values) else NA_integer_
-  result <- if (any(usable)) attempts[[selected]]$result else
+  result <- if (any(usable)) {
+    attempts[[selected]]$result
+  } else {
     list(par = rep(NA_real_, length(par)), value = Inf,
          counts = c("function" = NA_integer_, gradient = NA_integer_),
-         convergence = NA_integer_, message = "No usable result after optimization attempts.")
+         convergence = NA_integer_, message = "No usable result after optimization attempts.") 
+  }
+  
   result$usable <- any(usable)
   result$method <- method
   result$selected_attempt <- selected
   result$attempts <- attempts
   result$attempt_limit <- attempt_limit
-  result$converged <- if (method == "SANN") NA else
+  result$converged <- if (method == "SANN") {
+    NA
+  } else{
     isTRUE(result$usable && result$convergence == 0L)
-  problem <- vapply(attempts, function(a)
-    !a$usable || !isTRUE(a$result$convergence == 0L) || length(a$warnings) > 0L, logical(1))
+  }
+  
+  problem <- vapply(attempts, 
+                    function(a) (!a$usable || !isTRUE(a$result$convergence == 0L) || length(a$warnings) > 0L), 
+                    logical(1))
+  
   if (warn && any(problem)) {
     details <- vapply(seq_along(attempts), function(i) {
       a <- attempts[[i]]
@@ -189,7 +214,7 @@ loss_asymm = function(eps, k, c, g = 1){
   h = 2*g
   u = (k_vec * eps)^h
   c_root = c^(1/h)
-
+  
   # Original loss: 1 - exp(-a), where a = (u + c)^(1/h) - c^(1/h).
   a = (u + c)^(1/h) - c_root
   if (g == 1) {
@@ -314,7 +339,7 @@ H_pop = function(idx, beta, y, X, X2, k, c, freq = 1,
   eps = (y - link(eta))
   k_vec = k[(eps>0)+1]
   u = k_vec*eps
-
+  
   u2 = u^2
   s = u2 + c
   root_s = sqrt(s)
@@ -323,7 +348,7 @@ H_pop = function(idx, beta, y, X, X2, k, c, freq = 1,
   # (appropriate in this tail regime with the small c used in the study).
   ratio = u2 / s
   ratio[is.infinite(u2)] = 1
-
+  
   log_phi = sqrt(c) - root_s
   # Original factor: k_vec^2 * exp(log_phi). The log-scale equivalent
   # avoids separately overflowing k_vec^2 or underflowing exp(log_phi).
@@ -523,7 +548,7 @@ construct_DR_Spatial<-function(x1, x2, k1 = 10, k2 = 10, normalize_cols = FALSE)
   # spatial effect is defined as purely smooth/nonlinear and no linear spatial
   # covariate is included in the predictor, so orthogonality to a (meaningless)
   # linear term is not required.
-
+  
   
   V0=svd(C,nv=k1*k2)$v[,2:(k1*k2)]
   
@@ -871,11 +896,11 @@ eval_logfullcond_beta <- function(idx, beta,
   }
   
   centered_beta <- beta[idx] - prior_mean
-
+  
   logprior <- -0.5 * sum(prior_precision * centered_beta^2)
   grad_prior <- -prior_precision * centered_beta
   H_prior <- -prior_precision
-
+  
   # Historical flat-intercept prior block (inactive; retained for comparison).
   # # No prior on intercept beta[1]
   # # Prior on beta[-1] with group-specific variances tau[tau_idx]^2
@@ -890,7 +915,7 @@ eval_logfullcond_beta <- function(idx, beta,
   #   grad_prior <- - (Omega * beta[idx])
   #   H_prior <- - Omega
   # }
-
+  
   # --- full conditional ---
   logpost <- loglik + logprior
   grad <- grad_ll + grad_prior
